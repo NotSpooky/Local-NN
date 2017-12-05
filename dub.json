@@ -1,0 +1,9 @@
+{
+	"name": "local_nn",
+	"authors": [
+		"Christian Duran Carvajal"
+	],
+	"description": "Locally connected neural networks.",
+	"copyright": "Copyright © 2017, Christian Duran C.",
+	"license": "BSD 2-clause"
+}
