@@ -11,7 +11,8 @@ void main()
     enum connectivity = 32;
     enum layers = 128;
     enum neuronsPerLayer = 64;
-    auto nn = new LocalNN!(connectivity, layers, neuronsPerLayer,`a/2f`)
+    // Example custom activation: Apply leakyRelu and then divide by 1.5
+    auto nn = new LocalNN!(connectivity, layers, neuronsPerLayer,(a => a.leakyRelu!0.2f / 1.5f))
         (/* Weight initialization function */ () => uniform (-0.5f, 0.5f, gen));
 
     // Example input: 64 random floats from 0 to 1.
@@ -24,7 +25,7 @@ void main()
 // Connectivity = neurons in layer before connected to each single neuron
 // in this layer.
 struct LocalNN (int connectivity, int layers, int neuronsPerLayer
-/**/ , alias activation, DataType = float) {
+/**/ , alias activation = linear!float, DataType = float) {
     static assert (connectivity > 0 && layers > 0 && neuronsPerLayer > 0);
     alias SingleNeuronWeights = DataType [connectivity];
     LocalLayer!(neuronsPerLayer, connectivity, activation, DataType) [layers] nn;
@@ -58,7 +59,7 @@ struct LocalNN (int connectivity, int layers, int neuronsPerLayer
     }
 }
 
-struct LocalLayer (int neurons, int connectivity, alias activation
+struct LocalLayer (int neurons, int connectivity, alias activation = linear!DataType
 /**/ , DataType = float) {
     @disable this ();
     this (R)(R weights) if (isInputRange!R){
@@ -100,7 +101,7 @@ unittest { // Test single layers.
     // Each element should be 1*1 + 2*2, 3*2 + 4*3, 5*3 + 6*4, ...
     assert (output == [5, 18, 39, 68, 45, 20, 53, 94]);
     // Layers with all weights as 1.
-    layer = LType (() => 1f);
+    layer = LType (&Ones); // Could also use a lambda () => 1
     layer.forward (input, output);
     // Each element should be 1 + 2, 2 + 3, ...
     assert (output == [3, 5, 7, 9, 11, 13, 15, 17]);
@@ -111,7 +112,7 @@ unittest { // Test locally connected NN.
     enum connectivity = 2;
 
     // Test single layer.
-    auto nn = LocalNN!(connectivity, 1 /* layer */, neurons, linear)(() => 1);
+    auto nn = LocalNN!(connectivity, 1 /* layer */, neurons)(&Ones);
     // Forward with biases initialized with 0.
     auto output = nn.forward ([1, 2, 3, 4, 5, 6, 7, 8], 0f /*Biases at 0*/);
     // Each element should be 0*1 + 1*1, 1*1 + 2*1 + 2*1 + 3*1, ...
@@ -119,7 +120,7 @@ unittest { // Test locally connected NN.
     assert (output == [1, 3, 5, 7, 9, 11, 13, 15], `Test single layer failed`);
 
     // Test 2 layers
-    auto nn2 = LocalNN!(connectivity, 2 /* layers */, neurons, linear)(() => 1);
+    auto nn2 = LocalNN!(connectivity, 2 /* layers */, neurons)(&Ones);
     output = nn2.forward ([1, 2, 3, 4, 5, 6, 7, 8], 0f/*Biases at 0*/);
     // Each element should be the result of nn.forward but joined a level 
     // more:
@@ -127,9 +128,17 @@ unittest { // Test locally connected NN.
     assert (output == [1, 4, 8, 12, 16, 20, 24, 28], `Test 2 layers failed`);
 }
 
-// Activations.
-T linear (T = float)(T input) {return input;}
-T half (T = float)(T input) {return input/2;}
+@safe @nogc pure nothrow {
+    // Initializations
+    auto Ones () { return 1;}
+    auto Zeros () {return 0;} 
+
+    // Activations.
+    T linear (T = float)(T input) {return input;}
+    T half (T = float)(T input) {return input/2;}
+    T relu (T = float)(T input) {return input > 0? input : 0;}
+    R leakyRelu (alias ratio, R = typeof (ratio)) (R input) {return input >0? input : input * ratio;}
+}
 
 // Each neuron in a layer sums the values of the neurons connected to it,
 // then applies the activation function and that is sent to the neurons that
