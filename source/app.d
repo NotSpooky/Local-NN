@@ -1,5 +1,6 @@
 import std.stdio, std.range;
 import std.traits : isCallable;
+import std.functional : unaryFun;
 
 // Example usage.
 void main()
@@ -10,7 +11,7 @@ void main()
     enum connectivity = 32;
     enum layers = 128;
     enum neuronsPerLayer = 64;
-    auto nn = new LocalNN!(connectivity, layers, neuronsPerLayer,a => a/2f)
+    auto nn = new LocalNN!(connectivity, layers, neuronsPerLayer,`a/2f`)
         (/* Weight initialization function */ () => uniform (-0.5f, 0.5f, gen));
 
     // Example input: 64 random floats from 0 to 1.
@@ -80,7 +81,7 @@ struct LocalLayer (int neurons, int connectivity, alias activation
         foreach (i; 0..neurons) {
             import std.numeric : dotProduct;
             // TODO: Check if manual optimization needed.
-            output [i] = activation (dotProduct (input [i..i+connectivity], weights [weightStart..weightStart + connectivity]));
+            output [i] = unaryFun!activation (dotProduct (input [i..i+connectivity], weights [weightStart..weightStart + connectivity]));
             weightStart += connectivity;
         }
     }
@@ -127,8 +128,8 @@ unittest { // Test locally connected NN.
 }
 
 // Activations.
-float linear (float input) {return input;}
-int ilinear (int input) {return input;}
+T linear (T = float)(T input) {return input;}
+T half (T = float)(T input) {return input/2;}
 
 // Each neuron in a layer sums the values of the neurons connected to it,
 // then applies the activation function and that is sent to the neurons that
