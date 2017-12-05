@@ -13,3 +13,4 @@ local_nn
 *.o
 *.obj
 *.lst
+*.swp
