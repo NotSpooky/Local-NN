@@ -12,8 +12,8 @@ void main()
     enum layers = 128;
     enum neuronsPerLayer = 64;
     // Example custom activation: Apply leakyRelu and then divide by 1.5
-    auto nn = new LocalNN!(connectivity, layers, neuronsPerLayer,(a => a.leakyRelu!0.2f / 1.5f))
-        (/* Weight initialization function */ () => uniform (-0.5f, 0.5f, gen));
+    auto nn = new LocalNN!(connectivity, layers, neuronsPerLayer,(a => a.leakyRelu!0.2f / 2.5f))
+        (/* Weight initialization function */ () => uniform (-1f, 1f, gen));
 
     // Example input: 64 random floats from 0 to 1.
     float [64] input = uniform (0f, 1f, gen);
@@ -105,6 +105,9 @@ unittest { // Test single layers.
     layer.forward (input, output);
     // Each element should be 1 + 2, 2 + 3, ...
     assert (output == [3, 5, 7, 9, 11, 13, 15, 17]);
+
+    // Test selu compiles.
+    cast (void) 0.5.selu;
 }
 
 unittest { // Test locally connected NN.
@@ -137,7 +140,19 @@ unittest { // Test locally connected NN.
     T linear (T = float)(T input) {return input;}
     T half (T = float)(T input) {return input/2;}
     T relu (T = float)(T input) {return input > 0? input : 0;}
-    R leakyRelu (alias ratio, R = typeof (ratio)) (R input) {return input >0? input : input * ratio;}
+    R leakyRelu (alias ratio, R = typeof (ratio)) (R input) {return input >= 0? input : input * ratio;}
+    // tanh exists in std.math.
+    import std.math : log, exp;
+    T softplus (T = float)(T input){return log (1 + input.exp);}
+    // Self-Normalizing Neural Networks https://arxiv.org/abs/1706.02515
+    T selu (T = float) (T input) {
+        immutable alpha = 1.6732632423543772848170429916717;
+        immutable scale = 1.0507009873554804934193349852946;
+        return scale * elu!alpha (input);
+    }
+    T elu (alias alpha, T = typeof (alpha)) (T input) {
+        return input >= 0 ? input : alpha * (exp (input) - 1);
+    }
 }
 
 // Each neuron in a layer sums the values of the neurons connected to it,
