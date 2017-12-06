@@ -18,6 +18,40 @@ void main()
     // Example input: 64 random floats from 0 to 1.
     float [64] input = uniform (0f, 1f, gen);
     nn.forward (input).writeln;
+
+    auto reductor = new LocalReductionNN!(3, 8, 2) (&Ones);
+    reductor.forward ([1, 2, 3, 4, 5, 6, 7, 8]).writeln;
+
+}
+
+// This net should be SMALL. It is fully unrolled.
+// inputLen - outputLen should be a multiple of layers.
+struct LocalReductionNN (int layers, int inputLen, int outputLen
+/**/ , alias activation = linear!float, DataType = float) {
+    static assert (layers > 0 && inputLen > 0 && outputLen > 0 && outputLen < inputLen);
+    static assert ((inputLen - outputLen) % layers == 0,
+    /**/ `inputLen - outputLen should be a multiple of layers in LocalReductionNN.`);
+    enum reductionPerLayer = (inputLen - outputLen) / layers;
+    enum connectivity = reductionPerLayer + 1;
+    import std.conv : to;
+    static foreach (i; 0..layers) {
+        mixin (`LocalLayer!(` ~ (inputLen - (i + 1) * reductionPerLayer).to!string ~ `, connectivity, activation, DataType) nn` ~ i.to!string ~ ';');
+    }
+    this (F)(F initFunction) if (isCallable!F) {
+        static foreach (i; 0..layers) {
+            mixin (`nn` ~ i.to!string ~ ` = LocalLayer!(`~ (inputLen - (i + 1) * reductionPerLayer).to!string ~ `, connectivity, activation, DataType)(initFunction);`);
+        }
+    }
+    auto forward (in DataType [inputLen] input) {
+        DataType [inputLen] buf1 = input;
+        // Could be made smaller but must check if len > 0.
+        DataType [inputLen - reductionPerLayer] buf2;
+        static foreach (i; 0..layers) {
+            mixin(`nn` ~ i.to!string ~ `.forward (buf` ~ (i % 2 == 0 ? 1 : 2).to!string ~ `[0..` ~ (inputLen - i * reductionPerLayer).to!string ~`], buf` ~ (i % 2 == 0 ? 2 : 1).to!string ~ ` [0..` ~ (inputLen - (i + 1) * reductionPerLayer).to!string ~ `]);`);
+        }
+        mixin (`return buf` ~ (layers % 2 == 0 ? 1 : 2).to!string ~`[0..outputLen].dup;`);
+    }
+
 }
 
 // Implements a locally connected neural network with all the layers of the same
@@ -29,7 +63,7 @@ struct LocalNN (int connectivity, int layers, int neuronsPerLayer
     static assert (connectivity > 0 && layers > 0 && neuronsPerLayer > 0);
     alias SingleNeuronWeights = DataType [connectivity];
     LocalLayer!(neuronsPerLayer, connectivity, activation, DataType) [layers] nn;
-    this (F1)(F1 initFunction) if (isCallable!F1) {
+    this (F)(F initFunction) if (isCallable!F) {
         // Init all the layers with the init function.
         // TODO: Allow F1 to be value instead of function.
         nn = LocalLayer!(neuronsPerLayer, connectivity, activation, DataType)(initFunction);
