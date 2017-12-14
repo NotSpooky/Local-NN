@@ -8,7 +8,7 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
     alias InVector = DataType [neuronsLayerBefore];
     WeightVector weights;
     OutVector biases;
-    auto forward (in InVector lastLayerActivations, out OutVector ret) {
+    void forward (in InVector lastLayerActivations, out OutVector ret) {
         foreach (i; 0..neurons) {
             import std.numeric : dotProduct;
             ret [i] = activation (dotProduct (lastLayerActivations, weights [i]) + biases [i]);
@@ -50,22 +50,32 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
     }
 }
 
-/// Expects layers to have the following CT parameter format:
-/// neurons, neuronsLayerBefore, rest of parameters.
 
 /+
 // TODO: Allow arrays of layers or similar.
 /// A succession of numLayers identical dense layers.
 struct NeuralNetwork (DataType, uint inputLen, alias activation, Layers ...) {
+
     static foreach (i, layer; Layers) {
-        mixin (text(layer.stringof ~ `!(` ~ `)` ~ ` layer`, i, ` `
-        pragma (msg, i);
-        pragma (msg, layer!(3,4));
+        //auto layer = Layer (DataType.stringof, );
     }
 }
 +/
 
-private struct LayerData {
+/// Expects layers to have the following CT parameter format:
+/// neurons, neuronsLayerBefore, DataType, rest of parameters.
+// TODO: Change to ... instead of [].
+// Layers are named layer0, layer1 ...
+auto neuralNetwork (int inputLen, Layer [] layers)() {
+    struct NN {
+        pragma (msg, nnGenerator (inputLen, layers));
+        mixin (nnGenerator(inputLen, layers));
+    }
+    return new NN ();
+
+}
+
+private struct Layer {
     string type;
     uint neurons;
     /// Must be comma-separated and in the order that they are inserted.
@@ -73,12 +83,18 @@ private struct LayerData {
     
 }
 
-private string nnGenerator (int inputLen, LayerData [] layers) {
+private string nnGenerator (int inputLen, Layer [] layers, string dataType = `float`) {
     assert (inputLen > 0);
-    assert (layers.length);
+    assert (layers.length, `Cannot create empty neural network.`);
     import std.array : Appender;
     import std.conv : text;
+    import std.algorithm;
     Appender!string toReturn;
+
+
+    // Layer creation //
+
+    // Creates each layer
     foreach (i, layer; layers) {
         auto layerInputLen = i == 0 ? inputLen : layers [i-1].neurons;
         toReturn ~= text (
@@ -87,11 +103,48 @@ private string nnGenerator (int inputLen, LayerData [] layers) {
             //Eg. !(3, 4, float, Linear!float)
             , `!(`    , layer.neurons
                 , `, `, layerInputLen
+                , `, `, dataType
                 , `, `, layer.parameters
             ,`)` 
             // Eg. layer3;
-            , ` layer`, i , `;`);
+            , ` layer`, i , ";\n");
     }
+
+
+    // Buffer creation //
+
+    // Used to allocate an array of the appropiate length for the buffers.
+    // Used in the forward method.
+    // Could be optimized to use the second biggest also for the other buffer.
+    uint maxAmountOfNeurons = layers.map!(a => a.neurons).reduce!max;
+    // buffers).
+    // TODO: Optimize the case where activations needn't to be saved
+    // (Just predicting, not training).
+    // Eg. float [8][2] buffers;
+    string buffers = text (dataType, `[`, maxAmountOfNeurons, `]`
+        // If there's only 1 layer, no need for 2 buffers.
+        ,`[`,layers.length > 1 ? 2 : 1,`]`,
+        "buffers;\n" );
+
+    // Forward method creation //
+    // Prepare for spaguetti ;)
+    toReturn ~= text (
+    `auto forward (`, dataType, `[`, inputLen, `] input) {`
+    ,"\n\t", buffers);
+    foreach (i, layer; layers) {
+        string layerInput = i == 0 ? 
+            `input` // First layer receives from input.
+            // Other layers receive from the output of the last layer.
+            : text(`buffers [`, (i + 1) % 2, `][0..`,layers [i-1].neurons,`]`);
+        toReturn ~= text (
+        // Eg. layer0.forward (input, cast (float [8]) buffers [0][0..8]);
+        //     layer1.forward (buffers [0][0..8], cast (float [16]) buffers [1][0..16]);
+        //     return buffers [1][0..16].dup;
+        "\tlayer", i, `.forward (`, layerInput , `, cast (`, dataType,` [`, layer.neurons , `]) buffers [`,i % 2, `][0..`, layer.neurons , "]);\n");
+    }
+    toReturn ~= text(
+        "\treturn buffers [" , (layers.length + 1) % 2, `][0..`, layers [$-1].neurons, `].dup;`
+    , "\n}\n");
     return toReturn.data;
 }
 
@@ -101,7 +154,18 @@ unittest {
     //NeuralNetwork!(float, 2, 2, Linear!float, Dense) nn;
     debug {
         import std.stdio;
-        writeln (nnGenerator (4, [LayerData (`Dense`, 8, `float, Linear!float`)]));
+        /+
+        writeln (nnGenerator (4, [
+            Layer (`Dense`, 8, `float, Linear!float`)
+            , Layer (`Dense`, 4, `float, Linear!float`)
+        ]));
+        +/
+        auto a = neuralNetwork!(4, 
+            [Layer(`Dense`, 8, `Linear!float`)
+            , Layer (`Dense`, 16, `Linear!float`)
+            ]
+        );
+        writeln (*a);
     }
 
     auto inputLayer = Dense!(4, 2) ();
