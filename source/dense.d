@@ -70,6 +70,31 @@ auto neuralNetwork (int inputLen, Layer [] layers)() {
     struct NN {
         pragma (msg, nnGenerator (inputLen, layers));
         mixin (nnGenerator(inputLen, layers));
+
+        void train (R1, R2) (int epochs, int batchSize, R1 inputs, R2 labels) {
+            import std.range;
+            assert (inputs.length == labels.length);
+            assert (inputs.front.length == inputLen, `incorrect input length for training.`);
+            assert (labels.front.length == outputLen, `incorrect output length for training`);
+            foreach (epoch; 0..epochs) {
+                import std.random : randomShuffle;
+                import std.conv :to;
+                import std.algorithm;
+                auto indices = iota (inputs.length).array;
+                // Dataset is shuffled each epoch, TODO: Make optional.
+                indices.randomShuffle;
+                foreach (batch; indices.chunks (batchSize)) {
+                    auto dataChunks  = inputs.indexed (batch);
+                    auto labelChunks = labels.indexed (batch);
+                    auto activations = dataChunks
+                        .map!(a => a.to!(DataType[inputLen]))
+                        .map!(a => forward!true (a));
+                    foreach (output, label; activations.zip (labelChunks)) {
+                        import std.stdio; writeln (output, label);
+                    }
+                }
+            }
+        }
     }
     return new NN ();
 
@@ -98,6 +123,7 @@ private string nnGenerator (int inputLen, Layer [] layers, string dataType = `fl
     toReturn ~= text (
           `enum totalNeurons = `, totalNeurons, ";\n"
         , `enum inputLen = `, inputLen, ";\n"
+        , `enum outputLen = `, layers [$-1].neurons, ";\n"
         , `alias DataType = `, dataType, ";\n"
     );
 
@@ -128,9 +154,7 @@ private string nnGenerator (int inputLen, Layer [] layers, string dataType = `fl
     // Used in the forward method.
     // Could be optimized to use the second biggest also for the other buffer.
     uint maxAmountOfNeurons = layers.map!(a => a.neurons).reduce!max;
-    // buffers).
-    // TODO: Optimize the case where activations needn't to be saved
-    // (Just predicting, not training).
+
     // Eg. float [8][2] buffers;
     string buffers = text (`DataType [`, maxAmountOfNeurons, `]`
         // If there's only 1 layer, no need for 2 buffers.
@@ -173,7 +197,7 @@ private string nnGenerator (int inputLen, Layer [] layers, string dataType = `fl
         
         // Where is the output of the last layer stored:
         string lastBuffer = text (
-            `buffers [` ,(layers.length + 1) % 2, `][0..`, layers [$-1].neurons, `]`
+            `buffers [` ,(layers.length + 1) % 2, `][0..outputLen]`
         );
 
         toReturn ~= text(
@@ -186,34 +210,6 @@ private string nnGenerator (int inputLen, Layer [] layers, string dataType = `fl
         "}\n");
         // End of forward.
 
-        //////////////////////////////
-        // Training method creation //
-        //////////////////////////////
-
-        toReturn ~= text ("void train (R1, R2)(int epochs, int batchSize, R1 inputs, R2 labels) {\n"
-        , "\timport std.range;\n"
-        , "\tassert (inputs.length == labels.length);\n"
-        , "\tassert (inputs.front.length == inputLen, `incorrect input length for training.`);\n"
-        , "\tassert (labels.front.length == ", layers [$-1].neurons, ", `incorrect output length for training`);\n"
-        , "\tforeach (epoch; 0..epochs) {\n"
-        , "\t\timport std.random : randomShuffle;\n"
-        , "\t\timport std.conv :to;\n"
-        , "\t\timport std.algorithm;\n"
-        , "\t\tauto indices = iota (inputs.length).array;\n"
-        // Dataset is shuffled each epoch, TODO: Make optional.
-        , "\t\tindices.randomShuffle;"
-        , "\t\tforeach (batch; indices.chunks (batchSize)){\n"
-        , "\t\t\tauto dataChunks  = inputs.indexed (batch);"
-        , "\t\t\tauto labelChunks = labels.indexed (batch);"
-        , "\t\t\tauto activations = dataChunks
-            .map!(a => a.to!(DataType[inputLen]))
-            .map!(a => forward!true (a));\n"
-        , "\t\t\tforeach (output, label; activations.zip (labelChunks)) {\n"
-        , "\n\t\t\timport std.stdio; writeln (output, label);\n"
-        , "\t\t\t}\n"
-        , "\t\t}\n"
-        , "\t}\n"
-        , "}\n");
         
     return toReturn.data;
 }
