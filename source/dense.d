@@ -89,12 +89,22 @@ private string nnGenerator (int inputLen, Layer [] layers, string dataType = `fl
     import std.array : Appender;
     import std.conv : text;
     import std.algorithm;
+
+    uint totalNeurons = layers.map!(a => a.neurons).sum;
+
     Appender!string toReturn;
 
+    // Useful constants
+    toReturn ~= text (
+          `enum totalNeurons = `, totalNeurons, ";\n"
+        , `enum inputLen = `, inputLen, ";\n"
+        , `alias DataType = `, dataType, ";\n"
+    );
 
+    ////////////////////
     // Layer creation //
+    ////////////////////
 
-    // Creates each layer
     foreach (i, layer; layers) {
         auto layerInputLen = i == 0 ? inputLen : layers [i-1].neurons;
         toReturn ~= text (
@@ -110,8 +120,9 @@ private string nnGenerator (int inputLen, Layer [] layers, string dataType = `fl
             , ` layer`, i , ";\n");
     }
 
-
+    /////////////////////
     // Buffer creation //
+    /////////////////////
 
     // Used to allocate an array of the appropiate length for the buffers.
     // Used in the forward method.
@@ -121,30 +132,89 @@ private string nnGenerator (int inputLen, Layer [] layers, string dataType = `fl
     // TODO: Optimize the case where activations needn't to be saved
     // (Just predicting, not training).
     // Eg. float [8][2] buffers;
-    string buffers = text (dataType, `[`, maxAmountOfNeurons, `]`
+    string buffers = text (`DataType [`, maxAmountOfNeurons, `]`
         // If there's only 1 layer, no need for 2 buffers.
         ,`[`,layers.length > 1 ? 2 : 1,`]`,
         "buffers;\n" );
 
-    // Forward method creation //
-    // Prepare for spaguetti ;)
+    //////////////////////////////
+    // Forward method creation  //
+    // Prepare for spaguetti ;) //
+    //////////////////////////////
+
     toReturn ~= text (
-    `auto forward (`, dataType, `[`, inputLen, `] input) {`
-    ,"\n\t", buffers);
-    foreach (i, layer; layers) {
-        string layerInput = i == 0 ? 
-            `input` // First layer receives from input.
-            // Other layers receive from the output of the last layer.
-            : text(`buffers [`, (i + 1) % 2, `][0..`,layers [i-1].neurons,`]`);
-        toReturn ~= text (
-        // Eg. layer0.forward (input, cast (float [8]) buffers [0][0..8]);
-        //     layer1.forward (buffers [0][0..8], cast (float [16]) buffers [1][0..16]);
-        //     return buffers [1][0..16].dup;
-        "\tlayer", i, `.forward (`, layerInput , `, cast (`, dataType,` [`, layer.neurons , `]) buffers [`,i % 2, `][0..`, layer.neurons , "]);\n");
-    }
-    toReturn ~= text(
-        "\treturn buffers [" , (layers.length + 1) % 2, `][0..`, layers [$-1].neurons, `].dup;`
-    , "\n}\n");
+    // If the training parameter is used, then the activations are returned,
+    // the predicted output is returned otherwise.
+    "auto forward (bool training = false)(DataType [inputLen] input) {\n"
+        , "\t", buffers
+        , "\tstatic if (training)\n"
+        // Eg. float [150] activations = 0;
+            , "\t\tDataType [totalNeurons] activations = 0;\n");
+        uint endOfLastActivation = 0;
+        // Each layer outputs to alternating buffers.
+        // If training is also necessary to output to the activation buffer so that
+        // backpropagation knows them.
+        foreach (i, layer; layers) {
+            string layerInput = i == 0 ? 
+                `input` // First layer receives from input.
+                // Other layers receive from the output of the last layer.
+                : text(`buffers [`, (i + 1) % 2, `][0..`,layers [i-1].neurons,`]`);
+            string layerOutput = text (`buffers [`,i % 2, `][0..`, layer.neurons ,`]`);
+            toReturn ~= text (
+            // Eg. layer0.forward (input, cast (float [8]) buffers [0][0..8]);
+            //     layer1.forward (buffers [0][0..8], cast (float [16]) buffers [1][0..16]);
+            //     return buffers [1][0..16].dup;
+            "\tlayer", i, `.forward (`, layerInput , `, cast (DataType [`, layer.neurons , `])`, layerOutput, ");\n"
+            // Eg. activations [16..32] = buffers [0][0..16];
+            , "\tstatic if (training)\n"
+                , "\t\tactivations [", endOfLastActivation, `..`, endOfLastActivation + layer.neurons, `] = `, layerOutput, ";\n");
+            endOfLastActivation += layer.neurons;
+        }
+        
+        // Where is the output of the last layer stored:
+        string lastBuffer = text (
+            `buffers [` ,(layers.length + 1) % 2, `][0..`, layers [$-1].neurons, `]`
+        );
+
+        toReturn ~= text(
+            "\tstatic if (training)\n"
+            // Could be optimized to receive it by parameter.
+                , "\t\treturn activations.dup;\n"
+            , "\telse\n"
+            // If not training, return the last used buffer.
+                , "\t\treturn ", lastBuffer, ".dup;\n",
+        "}\n");
+        // End of forward.
+
+        //////////////////////////////
+        // Training method creation //
+        //////////////////////////////
+
+        toReturn ~= text ("void train (R1, R2)(int epochs, int batchSize, R1 inputs, R2 labels) {\n"
+        , "\timport std.range;\n"
+        , "\tassert (inputs.length == labels.length);\n"
+        , "\tassert (inputs.front.length == inputLen, `incorrect input length for training.`);\n"
+        , "\tassert (labels.front.length == ", layers [$-1].neurons, ", `incorrect output length for training`);\n"
+        , "\tforeach (epoch; 0..epochs) {\n"
+        , "\t\timport std.random : randomShuffle;\n"
+        , "\t\timport std.conv :to;\n"
+        , "\t\timport std.algorithm;\n"
+        , "\t\tauto indices = iota (inputs.length).array;\n"
+        // Dataset is shuffled each epoch, TODO: Make optional.
+        , "\t\tindices.randomShuffle;"
+        , "\t\tforeach (batch; indices.chunks (batchSize)){\n"
+        , "\t\t\tauto dataChunks  = inputs.indexed (batch);"
+        , "\t\t\tauto labelChunks = labels.indexed (batch);"
+        , "\t\t\tauto activations = dataChunks
+            .map!(a => a.to!(DataType[inputLen]))
+            .map!(a => forward!true (a));\n"
+        , "\t\t\tforeach (output, label; activations.zip (labelChunks)) {\n"
+        , "\n\t\t\timport std.stdio; writeln (output, label);\n"
+        , "\t\t\t}\n"
+        , "\t\t}\n"
+        , "\t}\n"
+        , "}\n");
+        
     return toReturn.data;
 }
 
@@ -160,12 +230,18 @@ unittest {
             , Layer (`Dense`, 4, `float, Linear!float`)
         ]));
         +/
-        auto a = neuralNetwork!(4, 
-            [Layer(`Dense`, 8, `Linear!float`)
-            , Layer (`Dense`, 16, `Linear!float`)
+        auto a = neuralNetwork!(
+            /* Input length */ 4,
+            [
+              Layer(`Dense`, 8)
+            , Layer (`Dense`, 16, `ReLU!float`)
+            , Layer (`Dense`, 2, `Linear!float`)
             ]
         );
-        writeln (*a);
+        //writeln (*a);
+        a.forward ([1,2,3,4]);
+        a.forward!true ([1,2,3,4]);
+        a.train (2, 2, [[1f,2,3,4],[2f,3,4,5],[3f,4,5,6]], [[4f,3], [5f,4], [6f,5]]); 
     }
 
     auto inputLayer = Dense!(4, 2) ();
