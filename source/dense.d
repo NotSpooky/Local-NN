@@ -1,6 +1,8 @@
 module dense;
 
 import activations;
+import std.functional : unaryFun;
+import std.algorithm;
 
 struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activation = Linear!DataType) {
     alias WeightVector = DataType [neuronsLayerBefore][neurons];
@@ -31,12 +33,12 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
     // To determine how much to change for each neuron, the following algorithm
     // is used:
     // TODO: Might be useful to use doubles instead of floats for backprop.
-    import std.functional : unaryFun;
     auto backprop (alias updateFunction) (
         in OutVector errorVector,
         in InVector activationVector
     ) {
-
+        // Implementation note: Weights and activations should be updated
+        // simultaneously.
         /+debug {
             import std.stdio;
             writeln (`Biases before: `, biases);
@@ -47,7 +49,7 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
         foreach (neuronPos, error; errorVector) {
             auto effectInError = error * activation.derivative (error);
             biases [neuronPos] -= changeBasedOn (effectInError);
-            foreach (j, ref weight; weights [neuronPos]) {
+            foreach (j, weight; weights [neuronPos]) {
                 activationErrors [j] += effectInError * weight;
                 auto weightDerivative = effectInError * activationVector [j];
                 weight -= changeBasedOn (weightDerivative);
@@ -59,6 +61,7 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
             writeln (`Weights after: `, weights);
             writeln (`Activation errors: `, activationErrors);
         }+/
+        // TODO: Check if returning this is UB
         return activationErrors;
     }
 }
@@ -90,7 +93,7 @@ struct NeuralNetwork (DataType, uint inputLen, alias activation, Layers ...) {
 auto neuralNetwork (int inputLen, Layer [] layers, DataType = float, T)(T weightInitialization) {
     class NN {
         import std.conv : text, to;
-        pragma (msg, nnGenerator (inputLen, layers));
+        import std.range;
         mixin (nnGenerator(inputLen, layers));
 
         this () {
@@ -100,8 +103,7 @@ auto neuralNetwork (int inputLen, Layer [] layers, DataType = float, T)(T weight
             }
         }
         
-        void train (alias optimizer, R1, R2) (int epochs, int batchSize, R1 inputs, R2 labels) {
-            import std.range;
+        void train (alias optimizer, alias errorFun, bool printError = true, R1, R2) (int epochs, int batchSize, R1 inputs, R2 labels) {
             assert (inputs.length == labels.length);
             assert (inputs.front.length == inputLen, `incorrect input length for training.`);
             static assert (is (typeof (inputs.front.front) == DataType), 
@@ -115,24 +117,69 @@ auto neuralNetwork (int inputLen, Layer [] layers, DataType = float, T)(T weight
                 auto indices = iota (inputs.length).array;
                 // Dataset is shuffled each epoch, TODO: Make optional.
                 indices.randomShuffle;
+                auto activationV = new DataType [totalNeurons];
                 foreach (batch; indices.chunks (batchSize)) {
+                    activationV [] = 0;
                     auto dataChunks  = inputs.indexed (batch);
                     auto labelChunks = labels.indexed (batch);
-                    DataType [totalNeurons] activationV = 0;
-                    auto activationVR = activationV [];
+                    DataType [inputLen] averageInputs = 0;
+                    DataType [outputLen] averageOutputError = 0;
                     foreach (example, label; zip (dataChunks, labelChunks)) {
-                        this.forward!true (example.to!(DataType [inputLen]), activationVR);
-                        debug {
-                            import std.stdio;
-                            writeln (activationVR);
-                        }
-                        mixin (mixBackprop);
-                        //assert (0, `TODO: Finish`);
+                        averageInputs [] += example [];
+                        this.forward!true (example.to!(DataType [inputLen]), activationV);
+                        averageOutputError [] += activationV [$ - outputLen .. $] - label []; 
                     }
+                    averageInputs [] /= batch.length;
+                    averageOutputError [] /= batch.length;
+                    DataType [] lastError = averageOutputError;
+                    static if (printError) {
+                        import std.stdio;
+                        writeln (`lastError = `, lastError.sum);
+                    }
+                    mixin (mixBackprop ());
                 }
             }
         } // End of train
-        enum mixBackprop = ``;
+        static string mixBackprop () {
+            import std.array : Appender;
+            Appender!string toReturn;
+            uint [] posInActivationV = [0];
+            uint lastActivation = 0;
+            foreach (layer; layers [0..$-1]) {
+                lastActivation += layer.neurons;
+                posInActivationV ~= lastActivation;
+            }
+            
+            assert (posInActivationV.length >= 2);
+            foreach_reverse (i, layer; layers) {
+                // The activation positions of this layer.
+                string error, activationBefore;
+
+                // The activation positions of the layer before.
+                if (posInActivationV.length > 1) {
+                    auto endPos = posInActivationV.back;
+                    auto startPos = posInActivationV [$ - 2];
+                    // Has layers before.
+                    activationBefore = text (
+                        `activationV [`, startPos, `..`, endPos, "]",
+                    );
+                } else {
+                    // Is first layer.
+                    activationBefore = `averageInputs`;
+                }
+                //Eg lastError = 
+                //  layer2.backprop!optimizer (
+                //     lastError.to!(DataType [2]), activationV [8..24]
+                //  );
+                string errorIn = text (`lastError.to!(DataType [`, layer.neurons, `])`);
+                toReturn ~= text(
+                    ` lastError = layer`, i
+                    , `.backprop!optimizer (`, errorIn, `, `, activationBefore, ");\n"
+                );
+                posInActivationV.popBack;
+            }
+            return toReturn.data;
+        }
         //`auto error`, i, ` = layer`, i, `.backprop!optimizer (activationVR []);`
         
 
@@ -155,7 +202,6 @@ private string nnGenerator (int inputLen, Layer [] layers) {
     assert (layers.length, `Cannot create empty neural network.`);
     import std.array : Appender;
     import std.conv : text;
-    import std.algorithm;
 
     uint totalNeurons = layers.map!(a => a.neurons).sum;
 
@@ -214,7 +260,7 @@ private string nnGenerator (int inputLen, Layer [] layers) {
     // TODO: Split in a version that uses the activation vector and other that doesn't.
     "auto forward (bool training = false)(DataType [inputLen] input, ref DataType [] activationVector) {\n"
         , "\tassert (activationVector || !training, `To train need to receive the activation vector`);\n"
-        , "\tassert (!activationVector || activationVector.length >= totalNeurons);\n"
+        , "\tassert (!activationVector || activationVector.length >= totalNeurons, `Activation should be null if training = false, and have enough space otherwise.`);\n"
         , "\t", buffers
         );
         uint endOfLastActivation = 0;
@@ -279,7 +325,8 @@ unittest {
         float [] noArr;
         a.forward ([1,2,3,4], noArr);
         a.forward!true ([1,2,3,4], activationVR);
-        a.train !`a/30`(2, 2, [[1f,2,3,4],[2f,3,4,5],[3f,4,5,6]], [[4f,3], [5f,4], [6f,5]]);
+        a.train !(`a/30`, `(a - b)*(a - b)`)(199, 2, [[1f,2,3,4],[2f,3,4,5],[3f,4,5,6]], [[4f,3], [5f,4], [6f,5]]);
+        a.forward ([1,2,3,4], noArr).writeln;
     }
 
     auto inputLayer = Dense!(4, 2) ();
