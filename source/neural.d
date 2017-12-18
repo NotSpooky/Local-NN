@@ -116,15 +116,11 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
 
                 endOfLastActivation += layer.neurons;
             }
-            // Return either the prediction or the activation vector.
 
+            // Return the prediction.
             toReturn ~= text (
-                "\tstatic if (training)\n"
-                // Could be optimized to receive it by parameter.
-                    , "\t\treturn activationVector.dup;\n"
-                , "\telse\n"
-                // If not training, return the last used buffer.
-                    , "\t\treturn buffers [" ,(layers.length + 1) % 2, `]`
+                "\tstatic if (!training)\n"
+                    ,"\t\treturn buffers [" ,(layers.length + 1) % 2, `]`
                     , "[0..outputLen].dup;\n"
             );
             return toReturn.data;
