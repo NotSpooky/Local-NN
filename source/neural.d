@@ -5,6 +5,7 @@ import std.algorithm;
 
 // TODO: Allow arrays of layers or similar.
 // TODO: Error function gradient.
+// TODO: Use the predictions instead of average output.
 
 
 private auto getValue (alias value) () {
@@ -17,8 +18,7 @@ private auto getValue (alias value) () {
 }
 
 /// Expects layers to have the following CT parameter format:
-/// neurons, neuronsLayerBefore, DataType, rest of parameters.
-// TODO: Change to ... instead of [].
+/// neurons, neuronsLayerBefore, DataType, activation, rest of parameters.
 // Layers are named layer0, layer1 ...
 auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers ...)() {
     class NN {
@@ -29,19 +29,123 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
         this () {
             static foreach (i, layer; layers) {
                 // Call the constructors of all the layers.
-                mixin (text (`layer`, i, ` = typeof (layer`, i, `)(getValue!weightInitialization);`));
+                mixin (text (
+                    `layer`, i, ` = typeof (layer`, i, `)`
+                    ~ `(getValue!weightInitialization);`
+                ));
             }
         }
 
-        void train (alias optimizer, alias errorFun, bool printError = true, R1, R2) (int epochs, int batchSize, R1 inputs, R2 labels) {
+
+        // If the training parameter is used, then the activations are returned,
+        // the predicted output is returned otherwise.
+        // TODO: Split into a version that uses the activation vector and
+        //  another that doesn't.
+        auto forward (bool training = false)
+            (DataType [inputLen] input, ref DataType [] activationVector) {
+            assert (activationVector || !training, `To train need to receive`
+                ~ ` the activation vector`);
+            assert (!activationVector || activationVector.length >= totalNeurons,
+                `Activation should be null if training = false,` 
+                ~ ` and have enough space otherwise.`);
+
+            // Used to allocate an array of the appropiate length for the buffers.
+            // Could be optimized to use the second biggest also for the other buffer.
+            // uint maxAmountOfNeurons = layers.map!(a => a.neurons).reduce!max;
+            immutable maxAmountOfNeurons = () {
+                uint toRet = 0;
+                foreach (layer; layers) {
+                    toRet = max (toRet, layer.neurons);
+                }
+                return toRet;
+            } ();
+
+            static if (layers.length > 1) {
+                DataType [maxAmountOfNeurons][2] buffers;
+            } else {
+                DataType [maxAmountOfNeurons][1] buffers;
+            }
+
+            pragma (msg, generateForward ());
+            mixin (generateForward ());
+        }
+        private static string generateForward () {
+            Appender!string toReturn;
+
+            // Used to iterate forwards and know which elements of the
+            // activation vector are used for each layer.
+            uint endOfLastActivation = 0;
+            // Each layer outputs to alternating buffers.
+            // If training is also necessary to output to the activation buffer
+            // so that backpropagation knows them.
+            foreach (i, layer; layers) {
+                static if (i == 0) {
+                    // First layer receives from input.
+                    string layerInput = `input`; 
+                } else {
+                    // Other layers receive from the output of the last layer.
+                    string layerInput = text (
+                        `buffers [`, (i + 1) % 2, `][0..`,layers [i-1].neurons,`]`
+                    );
+                }
+                string layerOutput = text (
+                    `buffers [`,i % 2, `][0..`, layer.neurons ,`]`
+                );
+
+                // Eg. layer0.forward (input, cast (float [8]) buffers [0][0..8]);
+                //  layer1.forward (
+                //     buffers [0][0..8], cast (float [16]) buffers [1][0..16]
+                //  );
+                //  return buffers [1][0..16].dup;
+                toReturn ~= text (
+                    "\tlayer", i, `.forward (`
+                        , layerInput 
+                        , `, cast (DataType [`, layer.neurons , `])`
+                        , layerOutput
+                    , ");\n"
+
+                    // Set the output of this layer to activationVector.
+                    // Eg. activationVector [16..32] = buffers [0][0..16];
+
+                    , "\tstatic if (training)\n"
+                        , "\t\tactivationVector ["
+                            , endOfLastActivation, `..`
+                            , endOfLastActivation + layer.neurons
+                        , `] = `, layerOutput, ";\n"
+                );
+
+                endOfLastActivation += layer.neurons;
+            }
+            // Return either the prediction or the activation vector.
+
+            toReturn ~= text (
+                "\tstatic if (training)\n"
+                // Could be optimized to receive it by parameter.
+                    , "\t\treturn activationVector.dup;\n"
+                , "\telse\n"
+                // If not training, return the last used buffer.
+                    , "\t\treturn buffers [" ,(layers.length + 1) % 2, `]`
+                    , "[0..outputLen].dup;\n"
+            );
+            return toReturn.data;
+        }
+
+        void train (
+            alias optimizer, 
+            alias errorFun, 
+            bool printError = true
+            , R1, R2
+        ) (int epochs, int batchSize, R1 inputs, R2 labels) {
             assert (inputs.length == labels.length);
-            assert (inputs.front.length == inputLen, `incorrect input length for training.`);
+            assert (inputs.front.length == inputLen
+                , `incorrect input length for training.`);
             static assert (is (typeof (inputs.front.front) == DataType), 
                 text (`Incorrect data type for input, should be `, DataType.stringof));
             static assert (is (typeof (labels.front.front) == DataType), 
                 text (`Incorrect data type for labels, should be `, DataType.stringof));
 
-            assert (labels.front.length == outputLen, `incorrect output length for training`);
+            assert (labels.front.length == outputLen
+                , `incorrect output length for training`);
             foreach (epoch; 0..epochs) {
                 import std.random : randomShuffle;
                 auto indices = iota (inputs.length).array;
@@ -56,8 +160,11 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                     DataType [outputLen] averageOutputError = 0;
                     foreach (example, label; zip (dataChunks, labelChunks)) {
                         averageInputs [] += example [];
-                        this.forward!true (example.to!(DataType [inputLen]), activationV);
-                        averageOutputError [] += activationV [$ - outputLen .. $] - label []; 
+                        this.forward!true (
+                            example.to!(DataType [inputLen]), activationV
+                        );
+                        averageOutputError [] 
+                            += activationV [$ - outputLen .. $] - label []; 
                     }
                     averageInputs [] /= batch.length;
                     averageOutputError [] /= batch.length;
@@ -116,6 +223,7 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
 }
 
 import activations : Linear;
+// TODO: Use AliasSeq instead of parameter string.
 private struct Layer (alias Type, alias Activation = Linear!float) {
     alias type = Type;
     alias activation = Activation;
@@ -172,86 +280,12 @@ private string nnGenerator (Layers ...) (int inputLen, Layers layers) {
         );
     }
 
-    /////////////////////
-    // Buffer creation //
-    /////////////////////
-
-    // Used to allocate an array of the appropiate length for the buffers.
-    // Used in the forward method.
-    // Could be optimized to use the second biggest also for the other buffer.
-    //uint maxAmountOfNeurons = layers.map!(a => a.neurons).reduce!max;
-    uint maxAmountOfNeurons = 0;
-    foreach (layer; layers) {
-        maxAmountOfNeurons = max (maxAmountOfNeurons, layer.neurons);
-    }
-
-    // Eg. float [8][2] buffers;
-    string buffers = text (`DataType [`, maxAmountOfNeurons, `]`
-        // If there's only 1 layer, no need for 2 buffers.
-        ,`[`,layers.length > 1 ? 2 : 1,`]`,
-        "buffers;\n" 
-    );
-
-    //////////////////////////////
-    // Forward method creation  //
-    // Prepare for spaguetti ;) //
-    //////////////////////////////
-
-    toReturn ~= text (
-        // If the training parameter is used, then the activations are returned,
-        // the predicted output is returned otherwise.
-        // TODO: Split in a version that uses the activation vector and other that doesn't.
-        "auto forward (bool training = false)(DataType [inputLen] input, ref DataType [] activationVector) {\n"
-        , "\tassert (activationVector || !training, `To train need to receive the activation vector`);\n"
-        , "\tassert (!activationVector || activationVector.length >= totalNeurons, `Activation should be null if training = false, and have enough space otherwise.`);\n"
-        , "\t", buffers
-    );
-    uint endOfLastActivation = 0;
-    // Each layer outputs to alternating buffers.
-    // If training is also necessary to output to the activation buffer so that
-    // backpropagation knows them.
-    foreach (i, layer; layers) {
-        static if (i == 0) {
-            string layerInput = `input`; // First layer receives from input.
-        } else {
-            // Other layers receive from the output of the last layer.
-            string layerInput = text (`buffers [`, (i + 1) % 2, `][0..`,layers [i-1].neurons,`]`);
-        }
-            
-        string layerOutput = text (`buffers [`,i % 2, `][0..`, layer.neurons ,`]`);
-        toReturn ~= text (
-            // Eg. layer0.forward (input, cast (float [8]) buffers [0][0..8]);
-            //     layer1.forward (buffers [0][0..8], cast (float [16]) buffers [1][0..16]);
-            //     return buffers [1][0..16].dup;
-            "\tlayer", i, `.forward (`, layerInput , `, cast (DataType [`, layer.neurons , `])`, layerOutput, ");\n"
-            // Eg. activationVector [16..32] = buffers [0][0..16];
-            , "\tstatic if (training)\n"
-            , "\t\tactivationVector [", endOfLastActivation, `..`, endOfLastActivation + layer.neurons, `] = `, layerOutput, ";\n"
-        );
-        endOfLastActivation += layer.neurons;
-    }
-
-    toReturn ~= text (
-        "\tstatic if (training)\n"
-        // Could be optimized to receive it by parameter.
-        , "\t\treturn activationVector.dup;\n"
-        , "\telse\n"
-        // If not training, return the last used buffer.
-        , "\t\treturn buffers [" ,(layers.length + 1) % 2, `]`
-        , "[0..outputLen].dup;\n",
-        "}\n"
-    );
-    // End of forward.
-
-
     return toReturn.data;
 }
 
 unittest {
     import dense;
     import activations;
-    //import std.meta : AliasSeq;
-    //NeuralNetwork!(float, 2, 2, Linear!float, Dense) nn;
     debug {
         auto a = neuralNetwork !
         (
