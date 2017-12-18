@@ -1,6 +1,6 @@
 module neural;
 
-import std.functional : unaryFun;
+import std.functional : unaryFun, binaryFun;
 import std.algorithm;
 
 // TODO: Allow arrays of layers or similar.
@@ -36,18 +36,35 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
             }
         }
 
+        // Version that returns the array by the output parameter.
+        auto predict (in DataType [inputLen] input, out DataType [outputLen] output) {
+            DataType [] activationVector;
+            forward!false (input, output, activationVector);
+        }
+
+        // Version that creates a new array and returns it.
+        auto predict (in DataType [inputLen] input) {
+            //auto toReturn = new DataType [outputLen];
+            DataType [outputLen] toReturn;
+            predict (input, toReturn);
+            return toReturn;
+        }
 
         // If the training parameter is used, then the activations are returned,
         // the predicted output is returned otherwise.
+        // activationVector should be 0 on the first call (values are added to it).
         // TODO: Split into a version that uses the activation vector and
         //  another that doesn't.
-        auto forward (bool training = false)
-            (DataType [inputLen] input, ref DataType [] activationVector) {
-            assert (activationVector || !training, `To train need to receive`
-                ~ ` the activation vector`);
-            assert (!activationVector || activationVector.length >= totalNeurons,
+        private void forward (bool training = false)
+            (in DataType [inputLen] input, out DataType [outputLen] output, ref DataType [] activationVector) {
+            assert (activationVector || !training
+                , `To train need to receive the activation vector`
+            );
+            assert (!activationVector 
+                || activationVector.length >= activationNeurons,
                 `Activation should be null if training = false,` 
-                ~ ` and have enough space otherwise.`);
+                ~ ` and have enough space otherwise.`
+            );
 
             // Used to allocate an array of the appropiate length for the buffers.
             // Could be optimized to use the second biggest also for the other buffer.
@@ -60,16 +77,17 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                 return toRet;
             } ();
 
+            // TODO: Now one less buffer is needed.
             static if (layers.length > 1) {
                 DataType [maxAmountOfNeurons][2] buffers;
             } else {
                 DataType [maxAmountOfNeurons][1] buffers;
             }
 
-            pragma (msg, generateForward ());
-            mixin (generateForward ());
+            pragma (msg, generateForward (training));
+            mixin (generateForward (training));
         }
-        private static string generateForward () {
+        private static string generateForward (bool training) {
             Appender!string toReturn;
 
             // Used to iterate forwards and know which elements of the
@@ -88,9 +106,14 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                         `buffers [`, (i + 1) % 2, `][0..`,layers [i-1].neurons,`]`
                     );
                 }
-                string layerOutput = text (
-                    `buffers [`,i % 2, `][0..`, layer.neurons ,`]`
-                );
+                static if (i == layers.length - 1) {
+                    // Last layer outputs to output.
+                    string layerOutput = `output`;
+                } else {
+                    string layerOutput = text (
+                        `buffers [`,i % 2, `][0..`, layer.neurons ,`]`
+                    );
+                }
 
                 // Eg. layer0.forward (input, cast (float [8]) buffers [0][0..8]);
                 //  layer1.forward (
@@ -98,69 +121,83 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                 //  );
                 //  return buffers [1][0..16].dup;
                 toReturn ~= text (
-                    "\tlayer", i, `.forward (`
+                    `layer`, i, `.forward (`
                         , layerInput 
                         , `, cast (DataType [`, layer.neurons , `])`
                         , layerOutput
                     , ");\n"
-
-                    // Set the output of this layer to activationVector.
-                    // Eg. activationVector [16..32] = buffers [0][0..16];
-
-                    , "\tstatic if (training)\n"
-                        , "\t\tactivationVector ["
-                            , endOfLastActivation, `..`
-                            , endOfLastActivation + layer.neurons
-                        , `] = `, layerOutput, ";\n"
                 );
+
+                // Set the output of this layer to activationVector.
+                // Eg. activationVector [16..32] = buffers [0][0..16];
+                if (training && i != layers.length -1) {
+                    toReturn ~= text (
+                        "activationVector ["
+                        , endOfLastActivation, `..`
+                        , endOfLastActivation + layer.neurons
+                        , `] = `, layerOutput, ";\n"
+                    );
+                }
 
                 endOfLastActivation += layer.neurons;
             }
 
-            // Return the prediction.
-            toReturn ~= text (
-                "\tstatic if (!training)\n"
-                    ,"\t\treturn buffers [" ,(layers.length + 1) % 2, `]`
-                    , "[0..outputLen].dup;\n"
-            );
             return toReturn.data;
         }
 
+        // TODO: Maybe eliminate the need for another array if the error
+        // function doesn't need it (for example mse).
+        // TODO: Add Random access range constraints.
         void train (
             alias optimizer, 
-            alias errorFun, 
+            alias errorFunction, 
             bool printError = true
             , R1, R2
         ) (int epochs, int batchSize, R1 inputs, R2 labels) {
+
             assert (inputs.length == labels.length);
             assert (inputs.front.length == inputLen
                 , `incorrect input length for training.`);
             static assert (is (typeof (inputs.front.front) == DataType), 
-                text (`Incorrect data type for input, should be `, DataType.stringof));
+                text (`Incorrect data type for input, should be `
+                    , DataType.stringof
+                )
+            );
             static assert (is (typeof (labels.front.front) == DataType), 
-                text (`Incorrect data type for labels, should be `, DataType.stringof));
+                text (`Incorrect data type for labels, should be `
+                    , DataType.stringof
+                )
+            );
 
             assert (labels.front.length == outputLen
-                , `incorrect output length for training`);
+                , `incorrect output length for training`
+            );
+
+            auto activationV = new DataType [activationNeurons];
             foreach (epoch; 0..epochs) {
                 import std.random : randomShuffle;
                 auto indices = iota (inputs.length).array;
                 // Dataset is shuffled each epoch, TODO: Make optional.
+                // TODO: Maybe is faster if indices are ommited (zip and shuffle)
                 indices.randomShuffle;
-                auto activationV = new DataType [totalNeurons];
                 foreach (batch; indices.chunks (batchSize)) {
                     activationV [] = 0;
                     auto dataChunks  = inputs.indexed (batch);
                     auto labelChunks = labels.indexed (batch);
-                    DataType [inputLen] averageInputs = 0;
+                    // Could add it to activationV or calculate only once for
+                    // the dataset (this one changes semantics) but it's
+                    // clearer this way.
+                    DataType [inputLen ] averageInputs = 0;
                     DataType [outputLen] averageOutputError = 0;
+                    DataType [outputLen] output;
                     foreach (example, label; zip (dataChunks, labelChunks)) {
                         averageInputs [] += example [];
                         this.forward!true (
-                            example.to!(DataType [inputLen]), activationV
+                            example.to!(DataType [inputLen]),
+                            output,
+                            activationV
                         );
-                        averageOutputError [] 
-                            += activationV [$ - outputLen .. $] - label []; 
+                        binaryFun!errorFunction (output, label, averageOutputError); 
                     }
                     averageInputs [] /= batch.length;
                     averageOutputError [] /= batch.length;
@@ -201,7 +238,7 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                     // Is first layer.
                     activationBefore = `averageInputs`;
                 }
-                //Eg lastError = 
+                // Eg lastError = 
                 //  layer2.backprop!optimizer (
                 //     lastError.to!(DataType [2]), activationV [8..24]
                 //  );
@@ -235,17 +272,18 @@ private string nnGenerator (Layers ...) (int inputLen, Layers layers) {
     import std.conv  : text;
     import std.meta  : staticMap;
     
-    //uint totalNeurons = staticMap!(a => a.neurons, layers).sum;
-    uint totalNeurons = 0;
-    foreach (layer; layers) {
-        totalNeurons += layer.neurons;
+    // Last layer doesn't need to store its activations for backpropagation.
+    // uint activationNeurons = layers [0..$-1].map!(a => a.neurons).sum;
+    uint activationNeurons = 0;
+    foreach (layer; layers [0 .. $-1]) {
+        activationNeurons += layer.neurons;
     }
 
     Appender!string toReturn;
 
     // Useful constants
     toReturn ~= text (
-        `enum totalNeurons = `, totalNeurons, ";\n"
+        `enum activationNeurons = `, activationNeurons, ";\n"
         , `enum inputLen = `, inputLen, ";\n"
         , `enum outputLen = `, layers [$ - 1].neurons, ";\n"
     );
@@ -293,14 +331,25 @@ unittest {
              , Layer! (Dense, Linear!float) (2)
         ) (); 
 
-        auto activationV = new float [a.totalNeurons];
-        activationV [] = 0f;
-        float [] noArr;
-        a.forward ([1,2,3,4], noArr);
-        a.forward!true ([1,2,3,4], activationV);
-        a.train! (`a/30`, `(a - b)*(a - b)`)
-            (10, 2, [[1f,2,3,4],[2f,3,4,5],[3f,4,5,6]], [[4f,3], [5f,4], [6f,5]]);
+        float [2] output;
+        float [4] input = [1,2,3,4];
         import std.stdio;
-        a.forward ([1,2,3,4], noArr).writeln;
+        // a.predict (input, output);
+        writeln (output);
+        //a.predict (input).writeln;
+        // Using just the derivative :)
+        static void meanSquaredError (A, B, C)(A output, in B expected, ref C accumulated) {
+            /+
+            output [] = expected [] - output [];
+            accumulated [] += output [] * output [];
+            +/
+            accumulated [] += output [] - expected [];
+        }
+        a.train! (`a/30`, meanSquaredError)
+            (
+                100, 2, [[1f,2,3,4],[2f,3,4,5],[3f,4,5,6]]
+                , [[4f,3], [5f,4], [6f,5]]
+            );
+        // a.predict (input).writeln;
     }
 }
