@@ -1,6 +1,5 @@
 module neural;
 
-import activations;
 import std.functional : unaryFun;
 import std.algorithm;
 
@@ -116,8 +115,10 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
     return new NN ();
 }
 
-private struct Layer (alias Type) {
+import activations : Linear;
+private struct Layer (alias Type, alias Activation = Linear!float) {
     alias type = Type;
+    alias activation = Activation;
     uint neurons;
     /// Must be comma-separated and in the order that they are inserted.
     string parameters; 
@@ -162,8 +163,9 @@ private string nnGenerator (Layers ...) (int inputLen, Layers layers) {
             , `!(`
                 , layer.neurons, `, `
                 , layerInputLen
-                , `, DataType, `
-                , layer.parameters
+                , `, DataType`
+                , `, layers [`, i, `].activation`
+                , `, `, layer.parameters
                 ,`)` 
             // Eg. layer3;
             , ` layer`, i , ";\n"
@@ -247,6 +249,7 @@ private string nnGenerator (Layers ...) (int inputLen, Layers layers) {
 
 unittest {
     import dense;
+    import activations;
     //import std.meta : AliasSeq;
     //NeuralNetwork!(float, 2, 2, Linear!float, Dense) nn;
     debug {
@@ -255,13 +258,10 @@ unittest {
              /* Input length */ 4
              , float
              , 0.5 // Can use both a function or a value as weight initialization.
-             , Layer!Dense (8)
-             , Layer!Dense (16, `ReLU!float`)
-             , Layer!Dense (2, `Linear!float`)
-        )
-        (
-
-        ); 
+             , Layer! (Dense) (8)
+             , Layer! (Dense, ReLU!float) (16)
+             , Layer! (Dense, Linear!float) (2)
+        ) (); 
 
         auto activationV = new float [a.totalNeurons];
         activationV [] = 0f;

@@ -69,7 +69,7 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
 unittest {
     // Manual neural network example.
 
-    auto inputLayer = Dense!(4, 2) ();
+    auto inputLayer = Dense! (4, 2) ();
     inputLayer.weights = [[.1f,.2], [.3,.4], [.5,.6], [.7,.8]];
     inputLayer.biases   = [.1f, .2, .3, .4];
     auto hiddenLayer = Dense!(4, 4) ();
