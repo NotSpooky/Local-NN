@@ -167,7 +167,7 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                     DataType [] lastError = averageOutputError;
                     static if (printError) {
                         import std.stdio;
-                        writeln (`lastError = `, lastError.sum);
+                        writeln (`lastError = `, - lastError.sum);
                     }
                     mixin (mixBackprop ());
                 }
