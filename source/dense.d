@@ -1,10 +1,11 @@
 module dense;
 
-import activations;
+import activations : Linear;
 import std.functional : unaryFun;
 import std.algorithm;
 
 struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activation = Linear!DataType) {
+    static assert (neurons > 0 && neuronsLayerBefore > 0);
     alias WeightVector = DataType [neuronsLayerBefore][neurons];
     alias OutVector = DataType [neurons];
     alias InVector = DataType [neuronsLayerBefore];
@@ -33,9 +34,12 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
     // To determine how much to change for each neuron, the following algorithm
     // is used:
     // TODO: Might be useful to use doubles instead of floats for backprop.
-    auto backprop (alias updateFunction) (
+    // TODO: Might be useful to separate the errorVector calculation into
+    // another function so that neural.d can omit the calculation for the first layer.
+    void backprop (alias updateFunction) (
         in OutVector errorVector,
-        in InVector activationVector
+        in InVector activationVector,
+        out InVector ret
     ) {
         // Implementation note: Weights and activations should be updated
         // simultaneously.
@@ -44,13 +48,13 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
             writeln (`Biases before: `, biases);
             writeln (`Weights before: `, weights);
         }+/
+        ret [] = 0;
         alias changeBasedOn = unaryFun!updateFunction;
-        DataType [neuronsLayerBefore] activationErrors = 0;
         foreach (neuronPos, error; errorVector) {
             auto effectInError = error * activation.derivative (error);
             biases [neuronPos] -= changeBasedOn (effectInError);
             foreach (j, weight; weights [neuronPos]) {
-                activationErrors [j] += effectInError * weight;
+                ret [j] += effectInError * weight;
                 auto weightDerivative = effectInError * activationVector [j];
                 weight -= changeBasedOn (weightDerivative);
             }
@@ -59,10 +63,8 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
             import std.stdio;
             writeln (`Biases after: `, biases);
             writeln (`Weights after: `, weights);
-            writeln (`Activation errors: `, activationErrors);
+            writeln (`Activation errors: `, ret);
         }+/
-        // TODO: Check if returning this is UB
-        return activationErrors;
     }
 }
 
@@ -82,6 +84,8 @@ unittest {
     float [2] inputData = [0f, 4f];
     float [2] expectedOutput = [2f, 3];
     float [2] outputLayerOut;
+    float [4] backpropBuffer;
+    float [4] backpropBuffer2;
 
     import std.stdio;
     float [4] inputLayerOut;
@@ -98,7 +102,8 @@ unittest {
     float [2] error = outputLayerOut [] - expectedOutput [];
     //writeln (`Linear error: `, error);
 
-    auto hiddenErrors = outputLayer.backprop!`a/30`(error, hiddenLayerOut);
-    auto inputErrors =  hiddenLayer.backprop!`a/30`(hiddenErrors, inputLayerOut);
-    inputLayer.backprop!`a/30` (inputErrors, inputData);
+    import std.conv;
+    outputLayer.backprop!`a/30`(error, hiddenLayerOut, backpropBuffer);
+    hiddenLayer.backprop!`a/30`(backpropBuffer, inputLayerOut, backpropBuffer2);
+    inputLayer.backprop!`a/30` (backpropBuffer2, inputData, cast (float [2]) backpropBuffer [0..2]);
 }

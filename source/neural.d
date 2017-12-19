@@ -69,7 +69,7 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
             // Used to allocate an array of the appropiate length for the buffers.
             // Could be optimized to use the second biggest also for the other buffer.
             // uint maxAmountOfNeurons = layers.map!(a => a.neurons).reduce!max;
-            immutable maxAmountOfNeurons = () {
+            enum maxAmountOfNeurons = () {
                 uint toRet = 0;
                 foreach (layer; layers) {
                     toRet = max (toRet, layer.neurons);
@@ -145,6 +145,18 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
             return toReturn.data;
         }
 
+
+        // Used to allocate an array for backpropagation gradients.
+        // TODO: If the backprop algorithm stops writing the last
+        // buffer. Could reduce the size by not considering inputLen.
+        enum biggestInput = () {
+            uint toRet = inputLen;
+            foreach (layer; layers [0..$-1]) {
+                toRet = max (toRet, layer.neurons);
+            }
+            return toRet;
+        } ();
+
         // TODO: Maybe eliminate the need for another array if the error
         // function doesn't need it (for example mse).
         // TODO: Add Random access range constraints.
@@ -187,9 +199,9 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                     // Could add it to activationV or calculate only once for
                     // the dataset (this one changes semantics) but it's
                     // clearer this way.
-                    DataType [inputLen ] averageInputs = 0;
-                    DataType [outputLen] averageOutputError = 0;
-                    DataType [outputLen] output;
+                    DataType [inputLen    ] averageInputs = 0;
+                    DataType [outputLen   ] averageOutputError = 0;
+                    DataType [outputLen   ] output;
                     foreach (example, label; zip (dataChunks, labelChunks)) {
                         averageInputs [] += example [];
                         this.forward!true (
@@ -201,11 +213,12 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                     }
                     averageInputs [] /= batch.length;
                     averageOutputError [] /= batch.length;
-                    DataType [] lastError = averageOutputError;
                     static if (printError) {
                         import std.stdio;
-                        writeln (`lastError = `, - lastError.sum);
+                        writeln (`lastError = `, - averageOutputError[].sum);
                     }
+                    // Gradient of layer activations w.r.t. layer output error.
+                    DataType [biggestInput] [2] backError; 
                     mixin (mixBackprop ());
                 }
             }
@@ -238,14 +251,30 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                     // Is first layer.
                     activationBefore = `averageInputs`;
                 }
-                // Eg lastError = 
-                //  layer2.backprop!optimizer (
-                //     lastError.to!(DataType [2]), activationV [8..24]
-                //  );
-                string errorIn = text (`lastError.to!(DataType [`, layer.neurons, `])`);
+
+                static if (i == layers.length - 1) {
+                    string errorIn = `averageOutputError`;
+                } else {
+                    string errorIn = text (
+                        `backError [`, (i + 1) % 2, `][0..`, layer.neurons ,`]`
+                    );
+                }
+                static if (i == 0) {
+                    // First layer. Really not necessary to store this.
+                    string gradientOutput = text (
+                        `cast (DataType [inputLen]) backError [0][0..inputLen]`
+                    );
+                } else {
+                    uint neuronsLBefore = layers [i - 1].neurons;
+                    string gradientOutput = text (
+                        `cast (DataType [`, neuronsLBefore ,`])`
+                        , ` backError [`, i % 2, `][0..`, neuronsLBefore ,`]`
+                    );
+                }
                 toReturn ~= text(
-                    ` lastError = layer`, i
-                    , `.backprop!optimizer (`, errorIn, `, `, activationBefore, ");\n"
+                    `layer`, i, `.backprop!optimizer (`
+                        , errorIn, `, `, activationBefore, `, `, gradientOutput
+                    , ");\n"
                 );
                 posInActivationV.popBack;
             }
@@ -334,8 +363,8 @@ unittest {
         float [2] output;
         float [4] input = [1,2,3,4];
         import std.stdio;
-        // a.predict (input, output);
-        writeln (output);
+        //a.predict (input, output);
+        //writeln (output);
         //a.predict (input).writeln;
         // Using just the derivative :)
         static void meanSquaredError (A, B, C)(A output, in B expected, ref C accumulated) {
@@ -347,9 +376,11 @@ unittest {
         }
         a.train! (`a/30`, meanSquaredError)
             (
-                100, 2, [[1f,2,3,4],[2f,3,4,5],[3f,4,5,6]]
+                3   /* Just 3 epochs for testing */
+                , 2 /* Batch size */
+                , [[1f,2,3,4],[2f,3,4,5],[3f,4,5,6]]
                 , [[4f,3], [5f,4], [6f,5]]
             );
-        // a.predict (input).writeln;
+        //a.predict (input).writeln;
     }
 }
