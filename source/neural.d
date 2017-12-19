@@ -21,7 +21,7 @@ private auto getValue (alias value) () {
 /// neurons, neuronsLayerBefore, DataType, activation, rest of parameters.
 // Layers are named layer0, layer1 ...
 auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers ...)() {
-    class NN {
+    final class NN {
         import std.conv : text, to;
         import std.range;
         mixin (nnGenerator (inputLen, layers));
@@ -348,6 +348,7 @@ private string nnGenerator (Layers ...) (int inputLen, Layers layers) {
 
 unittest {
     import dense;
+    import local;
     import activations;
     debug {
         auto a = neuralNetwork !
@@ -357,6 +358,7 @@ unittest {
              , 0.5 // Can use both a function or a value as weight initialization.
              , Layer! (Dense) (8)
              , Layer! (Dense, ReLU!float) (16)
+             , Layer! (Local, LeakyReLU!0.2f) (4)
              , Layer! (Dense, Linear!float) (2)
         ) (); 
 
@@ -376,7 +378,7 @@ unittest {
         }
         a.train! (`a/30`, meanSquaredError)
             (
-                3   /* Just 3 epochs for testing */
+                  3 /* Just 3 epochs for testing */
                 , 2 /* Batch size */
                 , [[1f,2,3,4],[2f,3,4,5],[3f,4,5,6]]
                 , [[4f,3], [5f,4], [6f,5]]

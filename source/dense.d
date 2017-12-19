@@ -1,7 +1,6 @@
 module dense;
 
 import activations : Linear;
-import std.functional : unaryFun;
 import std.algorithm;
 
 struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activation = Linear!DataType) {
@@ -9,6 +8,7 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
     alias WeightVector = DataType [neuronsLayerBefore][neurons];
     alias OutVector = DataType [neurons];
     alias InVector = DataType [neuronsLayerBefore];
+
     WeightVector weights;
     OutVector biases;
     
@@ -27,7 +27,9 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
     void forward (in InVector lastLayerActivations, out OutVector ret) {
         foreach (i; 0..neurons) {
             import std.numeric : dotProduct;
-            ret [i] = activation (dotProduct (lastLayerActivations, weights [i]) + biases [i]);
+            ret [i] = activation (
+                dotProduct (lastLayerActivations, weights [i]) + biases [i]
+            );
         }
     }
     // errorVector contains the expected change in the outputs of this layer.
@@ -39,7 +41,7 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
     void backprop (alias updateFunction) (
         in OutVector errorVector,
         in InVector activationVector,
-        out InVector ret
+        out InVector errorGradientLayerBefore
     ) {
         // Implementation note: Weights and activations should be updated
         // simultaneously.
@@ -48,13 +50,14 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
             writeln (`Biases before: `, biases);
             writeln (`Weights before: `, weights);
         }+/
-        ret [] = 0;
+        errorGradientLayerBefore [] = 0;
+        import std.functional : unaryFun;
         alias changeBasedOn = unaryFun!updateFunction;
         foreach (neuronPos, error; errorVector) {
             auto effectInError = error * activation.derivative (error);
             biases [neuronPos] -= changeBasedOn (effectInError);
             foreach (j, weight; weights [neuronPos]) {
-                ret [j] += effectInError * weight;
+                errorGradientLayerBefore [j] += effectInError * weight;
                 auto weightDerivative = effectInError * activationVector [j];
                 weight -= changeBasedOn (weightDerivative);
             }
@@ -63,7 +66,7 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
             import std.stdio;
             writeln (`Biases after: `, biases);
             writeln (`Weights after: `, weights);
-            writeln (`Activation errors: `, ret);
+            writeln (`Activation errors: `, errorGradientLayerBefore);
         }+/
     }
 }
