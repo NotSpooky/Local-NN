@@ -94,8 +94,8 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
             // activation vector are used for each layer.
             uint endOfLastActivation = 0;
             // Each layer outputs to alternating buffers.
-            // If training is also necessary to output to the activation buffer
-            // so that backpropagation knows them.
+            // If training its also necessary to output to the activation buffer
+            // so that backpropagation knows the average activations.
             foreach (i, layer; layers) {
                 static if (i == 0) {
                     // First layer receives from input.
@@ -349,15 +349,17 @@ private string nnGenerator (Layers ...) (int inputLen, Layers layers) {
 unittest {
     import dense;
     import local;
+    import gru;
     import activations;
     debug {
         auto a = neuralNetwork !
         (
              /* Input length */ 4
              , float
-             , 0.5 // Can use both a function or a value as weight initialization.
+             , 0.2 // Can use both a function or a value as weight initialization.
              , Layer! (Dense) (8)
              , Layer! (Dense, ReLU!float) (16)
+             , Layer! (GRU, TanH!float) (16)
              , Layer! (Local, LeakyReLU!0.2f) (4)
              , Layer! (Dense, Linear!float) (2)
         ) (); 
@@ -376,7 +378,7 @@ unittest {
             +/
             accumulated [] += output [] - expected [];
         }
-        a.train! (`a/30`, meanSquaredError)
+        a.train! (`a/35`, meanSquaredError)
             (
                   3 /* Just 3 epochs for testing */
                 , 2 /* Batch size */

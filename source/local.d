@@ -26,13 +26,9 @@ struct Local (int neurons, int neuronsLayerBefore, DataType = float
 
     this (T) (T weightInitialization) {
         foreach (ref neuronWeights; weights) {
-            foreach (ref weight; neuronWeights) {
-                weight = weightInitialization;
-            }
+            neuronWeights [] = weightInitialization;
         }
-        foreach (ref bias; biases) {
-            bias = weightInitialization;
-        }
+        biases = weightInitialization;
     }
 
     void forward (in InVector lastLayerActivations, out OutVector ret) {

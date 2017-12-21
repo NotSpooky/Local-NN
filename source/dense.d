@@ -14,13 +14,9 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
     
     this (T) (T weightInitialization) {
         foreach (ref neuronWeights; weights) {
-            foreach (ref weight; neuronWeights) {
-                weight = weightInitialization;
-            }
+            neuronWeights [] = weightInitialization;
         }
-        foreach (ref bias; biases) {
-            bias = weightInitialization;
-        }
+        biases [] = weightInitialization;
     }
 
 
