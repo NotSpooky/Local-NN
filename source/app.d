@@ -1,7 +1,6 @@
 void main () {
     import neural;
     import activations;
-    import local;
     enum inputLen = 64;
     float [inputLen][64] testInputs;
     float [inputLen][64] testOutputs;
@@ -16,11 +15,11 @@ void main () {
             i = genRandom;
         }
     }
+    import dense;
     auto nn = neuralNetwork ! (
         inputLen
         , float
         , genRandom // Can use both a function or a value as weight initialization.
-        /+
         , Layer! (Dense) (inputLen)
         , Layer! (Dense) (inputLen)
         , Layer! (Dense) (inputLen)
@@ -29,15 +28,6 @@ void main () {
         , Layer! (Dense) (inputLen)
         , Layer! (Dense) (inputLen)
         , Layer! (Dense) (inputLen)
-        +/
-        , Layer! (Local) (inputLen, "0")
-        , Layer! (Local) (inputLen, "0")
-        , Layer! (Local) (inputLen, "0")
-        , Layer! (Local) (inputLen, "0")
-        , Layer! (Local) (inputLen, "0")
-        , Layer! (Local) (inputLen, "0")
-        , Layer! (Local) (inputLen, "0")
-        , Layer! (Local) (inputLen, "0")
     ) (); 
 
 
