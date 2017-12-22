@@ -21,17 +21,20 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
     OutVector        weightBiases;
     OutVector        resetBiases;
     OutVector        updateBiases;
-    OutVector        hiddenState        = 0; // Last output.
+    OutVector        hiddenState          = 0; // Last output.
 
     // TODO: Make optional.
     // Saves the sum of all the hidden state inputs.
-    OutVector        hiddenStateSum     = 0;
-    OutVector        candidateStateSum  = 0;
-    OutVector        updateStateNegSum  = 0;
-    OutVector        weightsByHiddenSum = 0;
-    OutVector        resetStateSum      = 0;
-    InVector         inputSum           = 0;
-    uint             forwardCalls       = 0;
+    OutVector        hiddenStateSum       = 0;
+    OutVector        candidateStateSum    = 0;
+    OutVector        preCandidateStateSum = 0;
+    OutVector        updateStateNegSum    = 0;
+    OutVector        preUpdateStateSum    = 0;
+    OutVector        weightsByHiddenSum   = 0;
+    OutVector        resetStateSum        = 0;
+    OutVector        preResetStateSum     = 0;
+    InVector         inputSum             = 0;
+    uint             forwardCalls         = 0;
 
     this (T) (T weightInitialization) {
         foreach (i; 0..neurons) {
@@ -61,27 +64,36 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
         foreach (i; 0..neurons) {
             import std.numeric : dotProduct;
             import activations : Sigmoid, TanH;
+
             // Reset calculation
-            auto resetGate = sigmoids (
-                dotProduct (hiddenState, lastResetWeights [i])
-                + dotProduct (input, resetWeights [i]) + resetBiases [i]
-            );
+            auto preReset = 
+                dotProduct (input, resetWeights [i])
+                + dotProduct (hiddenState, lastResetWeights [i])
+                + resetBiases [i];
+
+            preResetStateSum [i] += preReset;
+            auto resetGate = sigmoids (preReset);
             resetStateSum [i] += resetGate;
 
             // Update calculation
-            auto updateGate = sigmoids (
+            auto preUpdate =
                 dotProduct (hiddenState, lastUpdateWeights [i])
-                + dotProduct (input, updateWeights [i]) + updateBiases [i]
-            ); 
+                + dotProduct (input, updateWeights [i])
+                + updateBiases [i];
+            
+            preUpdateStateSum [i] += preUpdate; 
+            auto updateGate = sigmoids (preUpdate);
             updateStateNegSum [i] -= updateGate;
 
             auto weightByHidden = dotProduct (hiddenState, lastWeights [i]);
             weightsByHiddenSum [i] += weightByHidden;
-            auto h = activation (
+            auto preCandidateState =
                 dotProduct (input, weights [i]) 
                 + resetGate * weightByHidden
-                + weightBiases [i]
-            );
+                + weightBiases [i];
+
+            preCandidateStateSum [i] += preCandidateState;
+            auto h = activation (preCandidateState);
             
             candidateStateSum [i] += h;
             // New hidden state calculation
@@ -98,7 +110,6 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
     // Needs batchSize to calculate the means.
     void backprop (alias updateFunction) (
             in OutVector errorVector,
-            in InVector activationVector,
             out InVector errorGradientLayerBefore
         ) {
         /+debug {
@@ -110,12 +121,15 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
         import std.functional : unaryFun;
         
         // Now they're averages.
-        hiddenStateSum     [] /= forwardCalls;
-        inputSum           [] /= forwardCalls;
-        candidateStateSum  [] /= forwardCalls;
-        updateStateNegSum  [] /= forwardCalls;
-        weightsByHiddenSum [] /= forwardCalls;
-        resetStateSum      [] /= forwardCalls;
+        hiddenStateSum        [] /= forwardCalls;
+        inputSum              [] /= forwardCalls;
+        candidateStateSum     [] /= forwardCalls;
+        updateStateNegSum     [] /= forwardCalls;
+        weightsByHiddenSum    [] /= forwardCalls;
+        resetStateSum         [] /= forwardCalls;
+        preResetStateSum      [] /= forwardCalls;
+        preUpdateStateSum     [] /= forwardCalls;
+        preCandidateStateSum  [] /= forwardCalls;
 
         alias changeBasedOn = unaryFun!updateFunction;
         foreach (neuronPos, error; errorVector) {
@@ -123,11 +137,13 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
             // Includes the sigmoids derivative for convenience.
             auto updateDerivative = error
                 * (hiddenStateSum [neuronPos] - candidateStateSum [neuronPos])
-                * sigmoids.derivative (error);
+                * sigmoids.derivative (preUpdateStateSum [neuronPos]);
 
             updateBiases [neuronPos] -= changeBasedOn (updateDerivative);
 
+            // Update gate gradients.
             foreach (i, ref weight; updateWeights [neuronPos]) {
+                errorGradientLayerBefore [i] += updateDerivative * weight;
                 auto weightDerivative = updateDerivative * inputSum [i];
                 weight -= changeBasedOn (weightDerivative);
             }
@@ -138,12 +154,13 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
 
             auto candidateDerivative =
                 error 
-                * updateStateNegSum [neuronPos] 
-                * activation.derivative (error);
+                * (updateStateNegSum [neuronPos] + 1)
+                * activation.derivative (preCandidateStateSum [neuronPos]);
 
             weightBiases [neuronPos] -= changeBasedOn (candidateDerivative);
 
             foreach (i, ref weight; weights [neuronPos]) {
+                errorGradientLayerBefore [i] += candidateDerivative * weight;
                 auto weightDerivative = candidateDerivative * inputSum [i];
                 weight -= changeBasedOn (weightDerivative);
             }
@@ -156,10 +173,11 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
             auto resetDerivative = 
                 candidateDerivative 
                 * weightsByHiddenSum [neuronPos]
-                * sigmoids.derivative (candidateDerivative);
+                * sigmoids.derivative (preResetStateSum [neuronPos]);
 
             resetBiases [neuronPos] -= changeBasedOn (resetDerivative);
             foreach (i, ref weight; resetWeights [neuronPos]) {
+                errorGradientLayerBefore [i] += resetDerivative * weight;
                 auto weightDerivative = resetDerivative * inputSum [i];
                 weight -= changeBasedOn (weightDerivative);
             }
@@ -167,24 +185,17 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
                 auto weightDerivative = resetDerivative * hiddenStateSum [i];
                 weight -= changeBasedOn (weightDerivative);
             }
-            //static assert (0, `TODO: GRU backprop`);
-            /+
-            auto effectInError = error * activation.derivative (error);
-            weightBiases [neuronPos] -= changeBasedOn (effectInError);
-            foreach (j, weight; weights [neuronPos]) {
-                errorGradientLayerBefore [j] += effectInError * weight;
-                auto weightDerivative = effectInError * activationVector [j];
-                weight -= changeBasedOn (weightDerivative);
-            }
-            +/
         }
 
         // Resets so that next iteration can start filling.
-        hiddenStateSum     [] = 0;
-        inputSum           [] = 0;
-        candidateStateSum  [] = 0;
-        weightsByHiddenSum [] = 0;
-        forwardCalls          = 0;
+        hiddenStateSum        [] = 0;
+        inputSum              [] = 0;
+        candidateStateSum     [] = 0;
+        weightsByHiddenSum    [] = 0;
+        preResetStateSum      [] = 0;
+        preUpdateStateSum     [] = 0;
+        preCandidateStateSum  [] = 0;
+        forwardCalls             = 0;
         /+debug {
             import std.stdio;
             writeln (`Biases after: `, weightBiases);

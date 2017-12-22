@@ -5,5 +5,12 @@
 	],
 	"description": "Locally connected neural networks.",
 	"copyright": "Copyright © 2017, Christian Duran C.",
-	"license": "BSD 2-clause"
+	"license": "BSD 2-clause",
+    "dflags-ldc": [
+        "-O5",
+        "-inline",
+        "-boundscheck=off",
+        "-ffast-math",
+        "-flto=full"
+    ]
 }

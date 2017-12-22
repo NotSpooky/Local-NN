@@ -3,14 +3,20 @@ module dense;
 import activations : Linear;
 import std.algorithm;
 
-struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activation = Linear!DataType) {
+struct Dense (int neurons, int neuronsLayerBefore, DataType = float
+    , alias activation = Linear!DataType) {
+
     static assert (neurons > 0 && neuronsLayerBefore > 0);
     alias WeightVector = DataType [neuronsLayerBefore][neurons];
-    alias OutVector = DataType [neurons];
-    alias InVector = DataType [neuronsLayerBefore];
+    alias OutVector    = DataType [neurons];
+    alias InVector     = DataType [neuronsLayerBefore];
 
     WeightVector weights;
-    OutVector biases;
+    OutVector    biases;
+    // TODO: Make optional.
+    InVector     activationSum          = 0;
+    OutVector    preActivationOutputSum = 0;
+    uint         forwardCalls           = 0;
     
     this (T) (T weightInitialization) {
         foreach (ref neuronWeights; weights) {
@@ -21,11 +27,15 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
 
 
     void forward (in InVector lastLayerActivations, out OutVector ret) {
+        forwardCalls ++;
+        activationSum [] += lastLayerActivations [];
         foreach (i; 0..neurons) {
             import std.numeric : dotProduct;
-            ret [i] = activation (
-                dotProduct (lastLayerActivations, weights [i]) + biases [i]
-            );
+            DataType preActivation = dotProduct ( 
+                lastLayerActivations, weights [i]
+            ) + biases [i];
+            preActivationOutputSum [i] += preActivation;
+            ret [i] = activation (preActivation);
         }
     }
     // errorVector contains the expected change in the outputs of this layer.
@@ -36,7 +46,6 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
     // another function so that neural.d can omit the calculation for the first layer.
     void backprop (alias updateFunction) (
         in OutVector errorVector,
-        in InVector activationVector,
         out InVector errorGradientLayerBefore
     ) {
         // Implementation note: Weights and activations should be updated
@@ -46,18 +55,24 @@ struct Dense (int neurons, int neuronsLayerBefore, DataType = float, alias activ
             writeln (`Biases before: `, biases);
             writeln (`Weights before: `, weights);
         }+/
+        activationSum          [] /= forwardCalls;
+        preActivationOutputSum [] /= forwardCalls;
         errorGradientLayerBefore [] = 0;
         import std.functional : unaryFun;
         alias changeBasedOn = unaryFun!updateFunction;
         foreach (neuronPos, error; errorVector) {
-            auto effectInError = error * activation.derivative (error);
+            auto effectInError = error 
+                * activation.derivative (preActivationOutputSum [neuronPos]);
             biases [neuronPos] -= changeBasedOn (effectInError);
             foreach (j, weight; weights [neuronPos]) {
                 errorGradientLayerBefore [j] += effectInError * weight;
-                auto weightDerivative = effectInError * activationVector [j];
+                auto weightDerivative = effectInError * activationSum [j];
                 weight -= changeBasedOn (weightDerivative);
             }
         }
+        activationSum          [] = 0;
+        preActivationOutputSum [] = 0;
+        forwardCalls              = 0;
         /+debug {
             import std.stdio;
             writeln (`Biases after: `, biases);
@@ -102,7 +117,7 @@ unittest {
     //writeln (`Linear error: `, error);
 
     import std.conv;
-    outputLayer.backprop!`a/30`(error, hiddenLayerOut, backpropBuffer);
-    hiddenLayer.backprop!`a/30`(backpropBuffer, inputLayerOut, backpropBuffer2);
-    inputLayer.backprop!`a/30` (backpropBuffer2, inputData, cast (float [2]) backpropBuffer [0..2]);
+    outputLayer.backprop!`a/30`(error, backpropBuffer);
+    hiddenLayer.backprop!`a/30`(backpropBuffer, backpropBuffer2);
+    inputLayer.backprop!`a/30` (backpropBuffer2, cast (float [2]) backpropBuffer [0..2]);
 }

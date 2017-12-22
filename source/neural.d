@@ -38,8 +38,7 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
 
         // Version that returns the array by the output parameter.
         auto predict (in DataType [inputLen] input, out DataType [outputLen] output) {
-            DataType [] activationVector;
-            forward!false (input, output, activationVector);
+            forward!false (input, output);
         }
 
         // Version that creates a new array and returns it.
@@ -50,21 +49,8 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
             return toReturn;
         }
 
-        // If the training parameter is used, then the activations are returned,
-        // the predicted output is returned otherwise.
-        // activationVector should be 0 on the first call (values are added to it).
-        // TODO: Split into a version that uses the activation vector and
-        //  another that doesn't.
         private void forward (bool training = false)
-            (in DataType [inputLen] input, out DataType [outputLen] output, ref DataType [] activationVector) {
-            assert (activationVector || !training
-                , `To train need to receive the activation vector`
-            );
-            assert (!activationVector 
-                || activationVector.length >= activationNeurons,
-                `Activation should be null if training = false,` 
-                ~ ` and have enough space otherwise.`
-            );
+            (in DataType [inputLen] input, out DataType [outputLen] output) {
 
             // Used to allocate an array of the appropiate length for the buffers.
             // Could be optimized to use the second biggest also for the other buffer.
@@ -87,15 +73,12 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
             pragma (msg, generateForward (training));
             mixin (generateForward (training));
         }
+
+        // TODO: Reset the internal state of the resetteable layers.
         private static string generateForward (bool training) {
             Appender!string toReturn;
 
-            // Used to iterate forwards and know which elements of the
-            // activation vector are used for each layer.
-            uint endOfLastActivation = 0;
             // Each layer outputs to alternating buffers.
-            // If training its also necessary to output to the activation buffer
-            // so that backpropagation knows the average activations.
             foreach (i, layer; layers) {
                 static if (i == 0) {
                     // First layer receives from input.
@@ -127,21 +110,7 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                         , layerOutput
                     , ");\n"
                 );
-
-                // Set the output of this layer to activationVector.
-                // Eg. activationVector [16..32] = buffers [0][0..16];
-                if (training && i != layers.length -1) {
-                    toReturn ~= text (
-                        "activationVector ["
-                        , endOfLastActivation, `..`
-                        , endOfLastActivation + layer.neurons
-                        , `] = `, layerOutput, ";\n"
-                    );
-                }
-
-                endOfLastActivation += layer.neurons;
             }
-
             return toReturn.data;
         }
 
@@ -185,7 +154,6 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                 , `incorrect output length for training`
             );
 
-            auto activationV = new DataType [activationNeurons];
             foreach (epoch; 0..epochs) {
                 import std.random : randomShuffle;
                 auto indices = iota (inputs.length).array;
@@ -193,12 +161,8 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                 // TODO: Maybe is faster if indices are ommited (zip and shuffle)
                 indices.randomShuffle;
                 foreach (batch; indices.chunks (batchSize)) {
-                    activationV [] = 0;
                     auto dataChunks  = inputs.indexed (batch);
                     auto labelChunks = labels.indexed (batch);
-                    // Could add it to activationV or calculate only once for
-                    // the dataset (this one changes semantics) but it's
-                    // clearer this way.
                     DataType [inputLen    ] averageInputs = 0;
                     DataType [outputLen   ] averageOutputError = 0;
                     DataType [outputLen   ] output;
@@ -207,11 +171,10 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                         this.forward!true (
                             example.to!(DataType [inputLen]),
                             output,
-                            activationV
                         );
                         binaryFun!errorFunction (output, label, averageOutputError); 
                     }
-                    averageInputs [] /= batch.length;
+                    averageInputs      [] /= batch.length;
                     averageOutputError [] /= batch.length;
                     static if (printError) {
                         import std.stdio;
@@ -227,31 +190,7 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
         static string mixBackprop () {
             import std.array : Appender;
             Appender!string toReturn;
-            uint [] posInActivationV = [0];
-            uint lastActivation = 0;
-            foreach (layer; layers [0..$-1]) {
-                lastActivation += layer.neurons;
-                posInActivationV ~= lastActivation;
-            }
-
-            assert (posInActivationV.length >= 2);
             foreach_reverse (i, layer; layers) {
-                // The activation positions of this layer.
-                string error, activationBefore;
-
-                // The activation positions of the layer before.
-                if (posInActivationV.length > 1) {
-                    auto endPos = posInActivationV.back;
-                    auto startPos = posInActivationV [$ - 2];
-                    // Has layers before.
-                    activationBefore = text (
-                        `activationV [`, startPos, `..`, endPos, "]",
-                    );
-                } else {
-                    // Is first layer.
-                    activationBefore = `averageInputs`;
-                }
-
                 static if (i == layers.length - 1) {
                     string errorIn = `averageOutputError`;
                 } else {
@@ -273,10 +212,9 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
                 }
                 toReturn ~= text(
                     `layer`, i, `.backprop!optimizer (`
-                        , errorIn, `, `, activationBefore, `, `, gradientOutput
+                        , errorIn, `, `, gradientOutput
                     , ");\n"
                 );
-                posInActivationV.popBack;
             }
             return toReturn.data;
         }
@@ -286,7 +224,7 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
 
 import activations : Linear;
 // TODO: Use AliasSeq instead of parameter string.
-private struct Layer (alias Type, alias Activation = Linear!float) {
+struct Layer (alias Type, alias Activation = Linear!float) {
     alias type = Type;
     alias activation = Activation;
     uint neurons;
@@ -371,20 +309,22 @@ unittest {
         //writeln (output);
         //a.predict (input).writeln;
         // Using just the derivative :)
-        static void meanSquaredError (A, B, C)(A output, in B expected, ref C accumulated) {
+        static void meanSquaredError (A, B, C)
+            (A output, in B expected, ref C accumulated) {
+
             /+
             output [] = expected [] - output [];
             accumulated [] += output [] * output [];
             +/
             accumulated [] += output [] - expected [];
         }
-        a.train! (`a/35`, meanSquaredError)
-            (
-                  3 /* Just 3 epochs for testing */
-                , 2 /* Batch size */
-                , [[1f,2,3,4],[2f,3,4,5],[3f,4,5,6]]
-                , [[4f,3], [5f,4], [6f,5]]
-            );
+        a.train! (`a/35`, meanSquaredError, false /* No stdout*/)
+        (
+              3 /* Just 3 epochs for testing */
+            , 2 /* Batch size */
+            , [[1f,2,3,4],[2f,3,4,5],[3f,4,5,6]]
+            , [[4f,3], [5f,4], [6f,5]]
+        );
         //a.predict (input).writeln;
     }
 }

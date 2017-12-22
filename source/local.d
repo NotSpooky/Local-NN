@@ -17,12 +17,15 @@ struct Local (int neurons, int neuronsLayerBefore, DataType = float
         );
     }
 
-    alias InVector = DataType [neuronsLayerBefore];
-    alias OutVector = DataType [neurons];
+    alias InVector     = DataType [neuronsLayerBefore];
+    alias OutVector    = DataType [neurons];
     alias WeightVector = DataType [connectivity][neurons];
 
     WeightVector weights;
-    OutVector biases;
+    OutVector    biases;
+    InVector     activationSum          = 0;
+    OutVector    preActivationOutputSum = 0;
+    uint         forwardCalls           = 0;
 
     this (T) (T weightInitialization) {
         foreach (ref neuronWeights; weights) {
@@ -32,33 +35,40 @@ struct Local (int neurons, int neuronsLayerBefore, DataType = float
     }
 
     void forward (in InVector lastLayerActivations, out OutVector ret) {
+        activationSum [] += lastLayerActivations [];
+        forwardCalls ++;
         foreach (i; 0..neurons) {
             import std.numeric : dotProduct;
-            ret [i] = activation (
-                dotProduct (
-                    lastLayerActivations [i * stride .. i * stride + connectivity]
-                    , weights [i]
-                )
-            );
+            DataType preActivation = dotProduct (
+                lastLayerActivations [i * stride .. i * stride + connectivity]
+                , weights [i]
+            ) + biases [i];
+            preActivationOutputSum [i] += preActivation;
+            ret [i] = activation (preActivation);
         }
     }
 
     void backprop (alias updateFunction) (
         in OutVector errorVector,
-        in InVector activationVector,
         out InVector errorGradientLayerBefore
     ) {
+        activationSum            [] /= forwardCalls;
+        preActivationOutputSum   [] /= forwardCalls;
         errorGradientLayerBefore [] = 0;
         import std.functional : unaryFun;
         alias changeBasedOn = unaryFun!updateFunction;
         foreach (neuronPos, error; errorVector) {
-            auto effectInError = error * activation.derivative (error);
+            auto effectInError = error 
+                * activation.derivative (preActivationOutputSum [neuronPos]);
             biases [neuronPos] -= changeBasedOn (effectInError);
             foreach (j, weight; weights [neuronPos]) {
                 errorGradientLayerBefore [neuronPos * stride + j] += effectInError * weight;
-                auto weightDerivative = effectInError * activationVector [j];
+                auto weightDerivative = effectInError * activationSum [j];
                 weight -= changeBasedOn (weightDerivative);
             }
         }
+        activationSum          [] = 0;
+        preActivationOutputSum [] = 0;
+        forwardCalls              = 0;
     }
 }
