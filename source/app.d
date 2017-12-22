@@ -39,7 +39,12 @@ void main () {
     import std.stdio;
     import std.datetime.stopwatch;
     auto del = () {
-        nn.train!(`a/100`, meanSquaredError, false)
+        nn.train!(
+            `a/100`, meanSquaredError
+            , false /* No stdout */
+            , false /* Don't shuffle */
+            , true  /* Parallel */
+        )
         (
               256
             , 32 /* Batch size */

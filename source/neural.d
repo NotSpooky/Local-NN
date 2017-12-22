@@ -132,7 +132,9 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
         void train (
             alias optimizer, 
             alias errorFunction, 
-            bool printError = true
+            bool printError   = true,
+            bool shuffleInput = true,
+            bool doInParallel = true
             , R1, R2
         ) (int epochs, int batchSize, R1 inputs, R2 labels) {
 
@@ -155,30 +157,41 @@ auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers .
             );
 
             foreach (epoch; 0..epochs) {
-                import std.random : randomShuffle;
                 auto indices = iota (inputs.length).array;
-                // Dataset is shuffled each epoch, TODO: Make optional.
-                // TODO: Maybe is faster if indices are ommited (zip and shuffle)
-                indices.randomShuffle;
+                static if (shuffleInput) {
+                    // TODO: Maybe is faster if indices are ommited (zip and shuffle)
+                    import std.random : randomShuffle;
+                    indices.randomShuffle;
+                }
                 foreach (batch; indices.chunks (batchSize)) {
                     auto dataChunks  = inputs.indexed (batch);
                     auto labelChunks = labels.indexed (batch);
-                    DataType [inputLen    ] averageInputs = 0;
                     DataType [outputLen   ] averageOutputError = 0;
                     DataType [outputLen   ] output;
-                    foreach (example, label; zip (dataChunks, labelChunks)) {
-                        averageInputs [] += example [];
+
+                    static if (doInParallel) {
+                        import std.parallelism;
+                        alias fun = (a) => parallel (a);
+                        //static assert (0, `TODO: Fix race conditions`);
+                    } else {
+                        alias fun = (a) => a;
+                    }
+                    foreach (exampleLabel; fun (zip (dataChunks, labelChunks))) {
                         this.forward!true (
-                            example.to!(DataType [inputLen]),
+                            exampleLabel [0].to!(DataType [inputLen]),
                             output,
                         );
-                        binaryFun!errorFunction (output, label, averageOutputError); 
+                        binaryFun!errorFunction (
+                            output, exampleLabel[1], averageOutputError
+                        );
                     }
-                    averageInputs      [] /= batch.length;
                     averageOutputError [] /= batch.length;
                     static if (printError) {
-                        import std.stdio;
-                        writeln (`lastError = `, - averageOutputError[].sum);
+                        import std.stdio : writeln;
+                        import std.math  : abs;
+                        writeln (`Linear error = `, 
+                            averageOutputError[].map!(a => abs(a)).sum
+                        );
                     }
                     // Gradient of layer activations w.r.t. layer output error.
                     DataType [biggestInput] [2] backError; 
@@ -328,3 +341,4 @@ unittest {
         //a.predict (input).writeln;
     }
 }
+pragma (msg, `Might check the CPU type in the dflags section of dub.json -mcpu=skylake was slower than not writing anything`);

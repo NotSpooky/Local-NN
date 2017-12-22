@@ -9,6 +9,7 @@
     "dflags-ldc": [
         "-O5",
         "-inline",
+        "-release",
         "-boundscheck=off",
         "-ffast-math",
         "-flto=full"
