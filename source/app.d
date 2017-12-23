@@ -15,20 +15,20 @@ void main () {
             i = genRandom;
         }
     }
-    import dense;
-    auto nn = neuralNetwork ! (
+    import dense, gru;
+    auto nn = new NeuralNetwork ! (
         inputLen
         , float
         , genRandom // Can use both a function or a value as weight initialization.
-        , Layer! (Dense) (inputLen)
-        , Layer! (Dense) (inputLen)
-        , Layer! (Dense) (inputLen)
-        , Layer! (Dense) (inputLen)
-        , Layer! (Dense) (inputLen)
-        , Layer! (Dense) (inputLen)
-        , Layer! (Dense) (inputLen)
-        , Layer! (Dense) (inputLen)
-    ) (); 
+        , Layer! (GRU) (inputLen)
+        , Layer! (GRU) (inputLen)
+        , Layer! (GRU) (inputLen)
+        , Layer! (GRU) (inputLen)
+        , Layer! (GRU) (inputLen)
+        , Layer! (GRU) (inputLen)
+        , Layer! (GRU) (inputLen)
+        , Layer! (GRU) (inputLen)
+    ); 
 
 
     static void meanSquaredError (A, B, C)

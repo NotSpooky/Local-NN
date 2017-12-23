@@ -20,219 +20,242 @@ private auto getValue (alias value) () {
 /// Expects layers to have the following CT parameter format:
 /// neurons, neuronsLayerBefore, DataType, activation, rest of parameters.
 // Layers are named layer0, layer1 ...
-auto neuralNetwork (int inputLen, DataType, alias weightInitialization, layers ...)() {
-    final class NN {
-        import std.conv : text, to;
-        import std.range;
-        mixin (nnGenerator (inputLen, layers));
+final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, layers ...) {
+    import std.conv : text, to;
+    import std.range;
+    mixin (nnGenerator (inputLen, layers));
 
-        this () {
-            static foreach (i, layer; layers) {
-                // Call the constructors of all the layers.
-                mixin (text (
-                    `layer`, i, ` = typeof (layer`, i, `)`
-                    ~ `(getValue!weightInitialization);`
-                ));
-            }
+    this () {
+        static foreach (i, layer; layers) {
+            // Call the constructors of all the layers.
+            mixin (text (
+                `layer`, i, ` = typeof (layer`, i, `)`
+                ~ `(getValue!weightInitialization);`
+            ));
         }
+    }
 
-        // Version that returns the array by the output parameter.
-        auto predict (in DataType [inputLen] input, out DataType [outputLen] output) {
-            forward!false (input, output);
-        }
+    // Version that returns the array by the output parameter.
+    auto predict (in DataType [inputLen] input, out DataType [outputLen] output) {
+        forward!false (input, output);
+    }
 
-        // Version that creates a new array and returns it.
-        auto predict (in DataType [inputLen] input) {
-            //auto toReturn = new DataType [outputLen];
-            DataType [outputLen] toReturn;
-            predict (input, toReturn);
-            return toReturn;
-        }
+    // Version that creates a new array and returns it.
+    auto predict (in DataType [inputLen] input) {
+        //auto toReturn = new DataType [outputLen];
+        DataType [outputLen] toReturn;
+        predict (input, toReturn);
+        return toReturn;
+    }
 
-        private void forward (bool training = false)
-            (in DataType [inputLen] input, out DataType [outputLen] output) {
+    private void forward (bool training = false)
+        (in DataType [inputLen] input, out DataType [outputLen] output) {
 
-            // Used to allocate an array of the appropiate length for the buffers.
-            // Could be optimized to use the second biggest also for the other buffer.
-            // uint maxAmountOfNeurons = layers.map!(a => a.neurons).reduce!max;
-            enum maxAmountOfNeurons = () {
-                uint toRet = 0;
-                foreach (layer; layers) {
-                    toRet = max (toRet, layer.neurons);
-                }
-                return toRet;
-            } ();
-
-            // TODO: Now one less buffer is needed.
-            static if (layers.length > 1) {
-                DataType [maxAmountOfNeurons][2] buffers;
-            } else {
-                DataType [maxAmountOfNeurons][1] buffers;
-            }
-
-            pragma (msg, generateForward (training));
-            mixin (generateForward (training));
-        }
-
-        // TODO: Reset the internal state of the resetteable layers.
-        private static string generateForward (bool training) {
-            Appender!string toReturn;
-
-            // Each layer outputs to alternating buffers.
-            foreach (i, layer; layers) {
-                static if (i == 0) {
-                    // First layer receives from input.
-                    string layerInput = `input`; 
-                } else {
-                    // Other layers receive from the output of the last layer.
-                    string layerInput = text (
-                        `buffers [`, (i + 1) % 2, `][0..`,layers [i-1].neurons,`]`
-                    );
-                }
-                static if (i == layers.length - 1) {
-                    // Last layer outputs to output.
-                    string layerOutput = `output`;
-                } else {
-                    string layerOutput = text (
-                        `buffers [`,i % 2, `][0..`, layer.neurons ,`]`
-                    );
-                }
-
-                // Eg. layer0.forward (input, cast (float [8]) buffers [0][0..8]);
-                //  layer1.forward (
-                //     buffers [0][0..8], cast (float [16]) buffers [1][0..16]
-                //  );
-                //  return buffers [1][0..16].dup;
-                toReturn ~= text (
-                    `layer`, i, `.forward (`
-                        , layerInput 
-                        , `, cast (DataType [`, layer.neurons , `])`
-                        , layerOutput
-                    , ");\n"
-                );
-            }
-            return toReturn.data;
-        }
-
-
-        // Used to allocate an array for backpropagation gradients.
-        // TODO: If the backprop algorithm stops writing the last
-        // buffer. Could reduce the size by not considering inputLen.
-        enum biggestInput = () {
-            uint toRet = inputLen;
-            foreach (layer; layers [0..$-1]) {
+        // Used to allocate an array of the appropiate length for the buffers.
+        // Could be optimized to use the second biggest also for the other buffer.
+        // uint maxAmountOfNeurons = layers.map!(a => a.neurons).reduce!max;
+        enum maxAmountOfNeurons = () {
+            uint toRet = 0;
+            foreach (layer; layers) {
                 toRet = max (toRet, layer.neurons);
             }
             return toRet;
         } ();
 
-        // TODO: Maybe eliminate the need for another array if the error
-        // function doesn't need it (for example mse).
-        // TODO: Add Random access range constraints.
-        void train (
-            alias optimizer, 
-            alias errorFunction, 
-            bool printError   = true,
-            bool shuffleInput = true,
-            bool doInParallel = true
-            , R1, R2
-        ) (int epochs, int batchSize, R1 inputs, R2 labels) {
+        // TODO: Now one less buffer is needed.
+        static if (layers.length > 1) {
+            DataType [maxAmountOfNeurons][2] buffers;
+        } else {
+            DataType [maxAmountOfNeurons][1] buffers;
+        }
 
-            assert (inputs.length == labels.length);
-            assert (inputs.front.length == inputLen
-                , `incorrect input length for training.`);
-            static assert (is (typeof (inputs.front.front) == DataType), 
-                text (`Incorrect data type for input, should be `
-                    , DataType.stringof
-                )
-            );
-            static assert (is (typeof (labels.front.front) == DataType), 
-                text (`Incorrect data type for labels, should be `
-                    , DataType.stringof
-                )
-            );
+        pragma (msg, generateForward (training));
+        mixin (generateForward (training));
+    }
 
-            assert (labels.front.length == outputLen
-                , `incorrect output length for training`
-            );
+    // TODO: Reset the internal state of the resetteable layers.
+    private static string generateForward (bool training) {
+        Appender!string toReturn;
 
-            foreach (epoch; 0..epochs) {
-                auto indices = iota (inputs.length).array;
-                static if (shuffleInput) {
-                    // TODO: Maybe is faster if indices are ommited (zip and shuffle)
-                    import std.random : randomShuffle;
-                    indices.randomShuffle;
-                }
-                foreach (batch; indices.chunks (batchSize)) {
-                    auto dataChunks  = inputs.indexed (batch);
-                    auto labelChunks = labels.indexed (batch);
-                    DataType [outputLen   ] averageOutputError = 0;
-                    DataType [outputLen   ] output;
-
-                    static if (doInParallel) {
-                        import std.parallelism;
-                        alias fun = (a) => parallel (a);
-                        //static assert (0, `TODO: Fix race conditions`);
-                    } else {
-                        alias fun = (a) => a;
-                    }
-                    foreach (exampleLabel; fun (zip (dataChunks, labelChunks))) {
-                        this.forward!true (
-                            exampleLabel [0].to!(DataType [inputLen]),
-                            output,
-                        );
-                        binaryFun!errorFunction (
-                            output, exampleLabel[1], averageOutputError
-                        );
-                    }
-                    averageOutputError [] /= batch.length;
-                    static if (printError) {
-                        import std.stdio : writeln;
-                        import std.math  : abs;
-                        writeln (`Linear error = `, 
-                            averageOutputError[].map!(a => abs(a)).sum
-                        );
-                    }
-                    // Gradient of layer activations w.r.t. layer output error.
-                    DataType [biggestInput] [2] backError; 
-                    mixin (mixBackprop ());
-                }
-            }
-        } // End of train
-
-        static string mixBackprop () {
-            import std.array : Appender;
-            Appender!string toReturn;
-            foreach_reverse (i, layer; layers) {
-                static if (i == layers.length - 1) {
-                    string errorIn = `averageOutputError`;
-                } else {
-                    string errorIn = text (
-                        `backError [`, (i + 1) % 2, `][0..`, layer.neurons ,`]`
-                    );
-                }
-                static if (i == 0) {
-                    // First layer. Really not necessary to store this.
-                    string gradientOutput = text (
-                        `cast (DataType [inputLen]) backError [0][0..inputLen]`
-                    );
-                } else {
-                    uint neuronsLBefore = layers [i - 1].neurons;
-                    string gradientOutput = text (
-                        `cast (DataType [`, neuronsLBefore ,`])`
-                        , ` backError [`, i % 2, `][0..`, neuronsLBefore ,`]`
-                    );
-                }
-                toReturn ~= text(
-                    `layer`, i, `.backprop!optimizer (`
-                        , errorIn, `, `, gradientOutput
-                    , ");\n"
+        // Each layer outputs to alternating buffers.
+        foreach (i, layer; layers) {
+            static if (i == 0) {
+                // First layer receives from input.
+                string layerInput = `input`; 
+            } else {
+                // Other layers receive from the output of the last layer.
+                string layerInput = text (
+                    `buffers [`, (i + 1) % 2, `][0..`,layers [i-1].neurons,`]`
                 );
             }
-            return toReturn.data;
+            static if (i == layers.length - 1) {
+                // Last layer outputs to output.
+                string layerOutput = `output`;
+            } else {
+                string layerOutput = text (
+                    `buffers [`,i % 2, `][0..`, layer.neurons ,`]`
+                );
+            }
+
+            // Eg. layer0.forward (input, cast (float [8]) buffers [0][0..8]);
+            //  layer1.forward (
+            //     buffers [0][0..8], cast (float [16]) buffers [1][0..16]
+            //  );
+            //  return buffers [1][0..16].dup;
+            toReturn ~= text (
+                `layer`, i, `.forward (`
+                    , layerInput 
+                    , `, cast (DataType [`, layer.neurons , `])`
+                    , layerOutput
+                , ");\n"
+            );
         }
+        return toReturn.data;
     }
-    return new NN ();
+
+
+    // Used to allocate an array for backpropagation gradients.
+    // TODO: If the backprop algorithm stops writing the last
+    // buffer. Could reduce the size by not considering inputLen.
+    enum biggestInput = () {
+        uint toRet = inputLen;
+        foreach (layer; layers [0..$-1]) {
+            toRet = max (toRet, layer.neurons);
+        }
+        return toRet;
+    } ();
+
+    // TODO: Maybe eliminate the need for another array if the error
+    // function doesn't need it (for example mse).
+    // TODO: Add Random access range constraints.
+    void train (
+        alias optimizer, 
+        alias errorFunction, 
+        bool printError   = true,
+        bool shuffleInput = true,
+        bool doInParallel = true
+        , R1, R2
+    ) (int epochs, int batchSize, R1 inputs, R2 labels) {
+
+        assert (inputs.length == labels.length);
+        assert (inputs.front.length == inputLen
+            , `incorrect input length for training.`);
+        static assert (is (typeof (inputs.front.front) == DataType), 
+            text (`Incorrect data type for input, should be `
+                , DataType.stringof
+            )
+        );
+        static assert (is (typeof (labels.front.front) == DataType), 
+            text (`Incorrect data type for labels, should be `
+                , DataType.stringof
+            )
+        );
+
+        assert (labels.front.length == outputLen
+            , `incorrect output length for training`
+        );
+
+        foreach (epoch; 0..epochs) {
+            auto indices = iota (inputs.length).array;
+            static if (shuffleInput) {
+                // TODO: Maybe is faster if indices are ommited (zip and shuffle)
+                import std.random : randomShuffle;
+                indices.randomShuffle;
+            }
+            static if (printError) {
+                DataType errorToPrint = 0;
+            }
+            uint correct = 0;
+            foreach (batch; indices.chunks (batchSize)) {
+                auto dataChunks  = inputs.indexed (batch);
+                auto labelChunks = labels.indexed (batch);
+                DataType [outputLen   ] averageOutputError = 0;
+                DataType [outputLen   ] output;
+
+                static if (doInParallel) {
+                    import std.parallelism;
+                    alias fun = (a) => parallel (a);
+                    //static assert (0, `TODO: Fix race conditions`);
+                } else {
+                    alias fun = (a) => a;
+                }
+                foreach (exampleLabel; fun (zip (dataChunks, labelChunks))) {
+                    this.forward!true (
+                        exampleLabel [0].to!(DataType [inputLen]),
+                        output,
+                    );
+                    DataType maxV = -100f;
+                    uint expectedPos = -1;
+                    foreach (uint pos, labelV; exampleLabel [1]) {
+                        if (labelV > 0.5f) {
+                            expectedPos = pos;
+                            break;
+                        }
+                    }
+                    uint foundPos = -1;
+                    foreach (uint pos, outVal; output) {
+                        if (outVal > maxV) {
+                            foundPos = pos;
+                            maxV = outVal;
+                        }
+                    }
+                    if (foundPos != expectedPos) {
+                        correct ++;
+                    }
+                    binaryFun!errorFunction (
+                        output, exampleLabel[1], averageOutputError
+                    );
+                }
+                averageOutputError [] /= batch.length;
+                static if (printError) {
+                    import std.math  : abs;
+                    errorToPrint += averageOutputError [].map!abs.sum;
+                }
+                // Gradient of layer activations w.r.t. layer output error.
+                DataType [biggestInput] [2] backError; 
+                mixin (mixBackprop ());
+            }
+            static if (printError) {
+                import std.stdio : writeln;
+                writeln (`Linear error = `, errorToPrint / batchSize);
+                writeln (`Correct = `, correct);
+                errorToPrint = 0;
+                correct = 0;
+            }
+        }
+    } // End of train
+
+    static string mixBackprop () {
+        import std.array : Appender;
+        Appender!string toReturn;
+        foreach_reverse (i, layer; layers) {
+            static if (i == layers.length - 1) {
+                string errorIn = `averageOutputError`;
+            } else {
+                string errorIn = text (
+                    `backError [`, (i + 1) % 2, `][0..`, layer.neurons ,`]`
+                );
+            }
+            static if (i == 0) {
+                // First layer. Really not necessary to store this.
+                string gradientOutput = text (
+                    `cast (DataType [inputLen]) backError [0][0..inputLen]`
+                );
+            } else {
+                uint neuronsLBefore = layers [i - 1].neurons;
+                string gradientOutput = text (
+                    `cast (DataType [`, neuronsLBefore ,`])`
+                    , ` backError [`, i % 2, `][0..`, neuronsLBefore ,`]`
+                );
+            }
+            toReturn ~= text(
+                `layer`, i, `.backprop!optimizer (`
+                    , errorIn, `, `, gradientOutput
+                , ");\n"
+            );
+        }
+        return toReturn.data;
+    }
 }
 
 import activations : Linear;
@@ -303,7 +326,7 @@ unittest {
     import gru;
     import activations;
     debug {
-        auto a = neuralNetwork !
+        auto a = new NeuralNetwork !
         (
              /* Input length */ 4
              , float
@@ -313,7 +336,7 @@ unittest {
              , Layer! (GRU, TanH!float) (16)
              , Layer! (Local, LeakyReLU!0.2f) (4)
              , Layer! (Dense, Linear!float) (2)
-        ) (); 
+        ); 
 
         float [2] output;
         float [4] input = [1,2,3,4];

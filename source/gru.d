@@ -65,6 +65,15 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
             import std.numeric : dotProduct;
             import activations : Sigmoid, TanH;
 
+            /+
+            // Tested and was too slow. :(
+            auto preSum (in WeightVector weigths_, in WeightVector lastWeights_
+                , in OutVector biasWeights) {
+
+                return dotProduct (input, weigths_ [i])
+                    + dotProduct (hiddenState, lastWeights_ [i])
+                    + biasWeights [i];
+            }+/
             // Reset calculation
             auto preReset = 
                 dotProduct (input, resetWeights [i])
@@ -77,8 +86,8 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
 
             // Update calculation
             auto preUpdate =
-                dotProduct (hiddenState, lastUpdateWeights [i])
-                + dotProduct (input, updateWeights [i])
+                dotProduct (input, updateWeights [i])
+                + dotProduct (hiddenState, lastUpdateWeights [i])
                 + updateBiases [i];
             
             preUpdateStateSum [i] += preUpdate; 
