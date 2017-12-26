@@ -45,7 +45,7 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
         //auto toReturn = new DataType [outputLen];
         DataType [outputLen] toReturn;
         predict (input, toReturn);
-        return toReturn;
+        return toReturn.dup;
     }
 
     private void forward (bool training = false)
@@ -69,7 +69,7 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
             DataType [maxAmountOfNeurons][1] buffers;
         }
 
-        pragma (msg, generateForward (training));
+        //pragma (msg, generateForward (training));
         mixin (generateForward (training));
     }
 
@@ -165,7 +165,6 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
             static if (printError) {
                 DataType errorToPrint = 0;
             }
-            uint correct = 0;
             foreach (batch; indices.chunks (batchSize)) {
                 auto dataChunks  = inputs.indexed (batch);
                 auto labelChunks = labels.indexed (batch);
@@ -184,26 +183,8 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
                         exampleLabel [0].to!(DataType [inputLen]),
                         output,
                     );
-                    DataType maxV = -100f;
-                    uint expectedPos = -1;
-                    foreach (uint pos, labelV; exampleLabel [1]) {
-                        if (labelV > 0.5f) {
-                            expectedPos = pos;
-                            break;
-                        }
-                    }
-                    uint foundPos = -1;
-                    foreach (uint pos, outVal; output) {
-                        if (outVal > maxV) {
-                            foundPos = pos;
-                            maxV = outVal;
-                        }
-                    }
-                    if (foundPos != expectedPos) {
-                        correct ++;
-                    }
                     binaryFun!errorFunction (
-                        output, exampleLabel[1], averageOutputError
+                        output, exampleLabel [1], averageOutputError
                     );
                 }
                 averageOutputError [] /= batch.length;
@@ -218,9 +199,7 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
             static if (printError) {
                 import std.stdio : writeln;
                 writeln (`Linear error = `, errorToPrint / batchSize);
-                writeln (`Correct = `, correct);
                 errorToPrint = 0;
-                correct = 0;
             }
         }
     } // End of train
@@ -321,6 +300,7 @@ private string nnGenerator (Layers ...) (int inputLen, Layers layers) {
 }
 
 unittest {
+    /+
     import dense;
     import local;
     import gru;
@@ -363,5 +343,6 @@ unittest {
         );
         //a.predict (input).writeln;
     }
+    +/
 }
 pragma (msg, `Might check the CPU type in the dflags section of dub.json -mcpu=skylake was slower than not writing anything`);

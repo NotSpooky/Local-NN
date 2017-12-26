@@ -1,4 +1,5 @@
 void main () {
+    /+
     import neural;
     import activations;
     enum inputLen = 64;
@@ -54,6 +55,7 @@ void main () {
     };
     auto time = benchmark!del (50);
     writeln (time);
+    +/
 }
 
 float genRandom () {

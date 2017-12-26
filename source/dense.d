@@ -42,9 +42,12 @@ unittest {
 
     float [2] error = outputLayerOut [] - expectedOutput [];
     //writeln (`Linear error: `, error);
-
+    import optimizer;
     import std.conv;
-    outputLayer.backprop!`a/30`(error, backpropBuffer);
+    auto outputLayerOpt = RMSProp! (0.003, typeof (outputLayer), 0.0001, 0.5)(1);
+    outputLayer.backprop (error, backpropBuffer, outputLayerOpt);
+    /+
     hiddenLayer.backprop!`a/30`(backpropBuffer, backpropBuffer2);
     inputLayer.backprop!`a/30` (backpropBuffer2, cast (float [2]) backpropBuffer [0..2]);
+    +/
 }

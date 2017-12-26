@@ -8,7 +8,7 @@ struct Local (int neurons, int neuronsLayerBefore, DataType = float
     static assert (neurons > 0 && neuronsLayerBefore > 0 && stride >= 0);
     enum connectivity = neuronsLayerBefore - (neurons * stride);
     static assert (connectivity > 0
-        , `Local layer would have negative connectivity.`
+        , `Local layer would have non-positive connectivity.`
     );
 
     static if (stride > connectivity) {
@@ -21,11 +21,12 @@ struct Local (int neurons, int neuronsLayerBefore, DataType = float
     alias OutVector    = DataType [neurons];
     alias WeightVector = DataType [connectivity][neurons];
 
-    WeightVector weights;
-    OutVector    biases;
-    InVector     activationSum          = 0;
-    OutVector    preActivationOutputSum = 0;
-    uint         forwardCalls           = 0;
+    import optimizer : trainable;
+    @trainable WeightVector weights;
+    @trainable OutVector    biases;
+               InVector     activationSum          = 0;
+               OutVector    preActivationOutputSum = 0;
+               uint         forwardCalls           = 0;
 
     this (T) (T weightInitialization) {
         foreach (ref neuronWeights; weights) {
@@ -48,27 +49,36 @@ struct Local (int neurons, int neuronsLayerBefore, DataType = float
         }
     }
 
-    void backprop (alias updateFunction) (
+    void backprop (Optimizer)(
         in OutVector errorVector,
-        out InVector errorGradientLayerBefore
+        out InVector errorGradientLayerBefore,
+        ref Optimizer optimizer
     ) {
         activationSum            [] /= forwardCalls;
         preActivationOutputSum   [] /= forwardCalls;
         errorGradientLayerBefore [] = 0;
         import std.functional : unaryFun;
-        alias changeBasedOn = unaryFun!updateFunction;
         foreach (neuronPos, error; errorVector) {
             auto effectInError = error 
                 * activation.derivative (preActivationOutputSum [neuronPos]);
-            biases [neuronPos] -= changeBasedOn (effectInError);
+            optimizer.setWeights!`biases` (biases [neuronPos], effectInError, neuronPos);
             foreach (j, weight; weights [neuronPos]) {
                 errorGradientLayerBefore [neuronPos * stride + j] += effectInError * weight;
                 auto weightDerivative = effectInError * activationSum [j];
-                weight -= changeBasedOn (weightDerivative);
+
+                optimizer.setWeights!`weights` 
+                    (weight, weightDerivative, neuronPos, j);
             }
         }
         activationSum          [] = 0;
         preActivationOutputSum [] = 0;
         forwardCalls              = 0;
     }
+}
+
+unittest {
+    import activations;
+    Local! (2, 4, float, Linear!float) layer;
+    typeof (layer.weights) testArray = 0;
+
 }
