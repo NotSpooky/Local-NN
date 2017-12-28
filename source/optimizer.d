@@ -16,10 +16,10 @@ struct Momentum (double learningRate, alias Layer, double momentumPercent = 0.1)
     static foreach (varName; mems) {
         mixin (`typeof (varName) ` ~ varName.stringof ~ `;`);
     }
-    this (D)(D initVal) {
+    this (bool) {
         // Initialize with initVal instead of NaN.
         static foreach (varName; mems) {
-            mixin (varName.stringof ~ `.recursiveInit (initVal);`);
+            mixin (varName.stringof ~ `.recursiveInit (0);`);
         }
     }
 
@@ -43,8 +43,9 @@ struct Momentum (double learningRate, alias Layer, double momentumPercent = 0.1)
 
 
 // epsilon is a small number to prevent division by 0.
-struct RMSProp (double learningRate, alias Layer, double epsilon = 1e-10
-    , double geometricRate = 0.9) {
+struct RMSProp (double learningRate, alias Layer, double geometricRate = 0.9
+    , double epsilon = 1e-10) {
+
     // Build members of the same type and length of every @trainable attribute 
     // of Layer.
 
@@ -56,10 +57,10 @@ struct RMSProp (double learningRate, alias Layer, double epsilon = 1e-10
         mixin (`typeof (varName) ` ~ varName.stringof ~ `;`);
     }
     @disable this ();
-    this (D)(D initVal) {
+    this (bool) {
         // Initialize with initVal instead of NaN.
         static foreach (varName; mems) {
-            mixin (varName.stringof ~ `.recursiveInit (initVal);`);
+            mixin (varName.stringof ~ `.recursiveInit (1);`);
         }
     }
 

@@ -125,6 +125,7 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
         return toRet;
     } ();
 
+    import optimizer : Optimizer;
     // TODO: Maybe eliminate the need for another array if the error
     // function doesn't need it (for example mse).
     // TODO: Add Random access range constraints.
@@ -150,15 +151,17 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
                 , DataType.stringof
             )
         );
+        static assert (__traits(compiles, optimizer.optimizer!(typeof(layer0)))
+            , `First compile-time parameter of train should be an Optimizer.`);
 
         assert (labels.front.length == outputLen
             , `incorrect output length for training`
         );
 
         static foreach (i, layer; layers) {
-            // Eg. auto optimizer2 = RMSProp!(0.001, typeof (layer2))(1);
+            // Eg. auto optimizer2 = RMSProp!(0.001, typeof (layer2))(true);
             mixin (text (`auto optimizer`, i
-                , q{ = optimizer.optimizer!(typeof (layer}, i, q{) )(1);})
+                , q{ = optimizer.optimizer!(typeof (layer}, i, q{) )(true);})
             );
         }
 
