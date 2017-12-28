@@ -34,6 +34,7 @@ struct Local (int neurons, int neuronsLayerBefore, DataType = float
         }
         biases = weightInitialization;
     }
+    @disable this ();
 
     void forward (in InVector lastLayerActivations, out OutVector ret) {
         activationSum [] += lastLayerActivations [];
@@ -78,7 +79,7 @@ struct Local (int neurons, int neuronsLayerBefore, DataType = float
 
 unittest {
     import activations;
-    Local! (2, 4, float, Linear!float) layer;
+    auto layer = Local! (2, 4, float, Linear!float) (0.2);
     typeof (layer.weights) testArray = 0;
 
 }

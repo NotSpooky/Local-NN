@@ -12,13 +12,13 @@ template Dense (int neurons, int neuronsLayerBefore, DataType = float
 unittest {
     // Manual neural network example.
 
-    auto inputLayer = Dense! (4, 2) ();
+    auto inputLayer = Dense! (4, 2) (0.2);
     inputLayer.weights = [[.1f,.2], [.3,.4], [.5,.6], [.7,.8]];
     inputLayer.biases   = [.1f, .2, .3, .4];
-    auto hiddenLayer = Dense!(4, 4) ();
+    auto hiddenLayer = Dense!(4, 4) (0.2);
     hiddenLayer.weights = [[.1f,.2,.3,.4],[.1,.2,.3,.4],[.1,.2,.3,.4],[.1,.2,.3,.4]];
     hiddenLayer.biases   = [.1f, .2, .3, .4];
-    auto outputLayer = Dense!(2, 4) ();
+    auto outputLayer = Dense!(2, 4) (0.2);
     outputLayer.weights = [[.1f,.2,.3,.4], [.1f,.2,.3,.4]];
     outputLayer.biases   = [.1f, .2];
 

@@ -2,6 +2,7 @@ module neural;
 
 import std.functional : unaryFun, binaryFun;
 import std.algorithm;
+import std.conv  : text, to;
 
 // TODO: Allow arrays of layers or similar.
 // TODO: Error function gradient.
@@ -21,7 +22,6 @@ private auto getValue (alias value) () {
 /// neurons, neuronsLayerBefore, DataType, activation, rest of parameters.
 // Layers are named layer0, layer1 ...
 final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, layers ...) {
-    import std.conv : text, to;
     import std.range;
     mixin (nnGenerator (inputLen, layers));
 
@@ -155,6 +155,13 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
             , `incorrect output length for training`
         );
 
+        static foreach (i, layer; layers) {
+            // Eg. auto optimizer2 = RMSProp!(0.001, typeof (layer2))(1);
+            mixin (text (`auto optimizer`, i
+                , q{ = optimizer.optimizer!(typeof (layer}, i, q{) )(1);})
+            );
+        }
+
         foreach (epoch; 0..epochs) {
             auto indices = iota (inputs.length).array;
             static if (shuffleInput) {
@@ -228,8 +235,8 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
                 );
             }
             toReturn ~= text(
-                `layer`, i, `.backprop!optimizer (`
-                    , errorIn, `, `, gradientOutput
+                `layer`, i, `.backprop (`
+                    , errorIn, `, `, gradientOutput, `, optimizer`, i
                 , ");\n"
             );
         }
@@ -251,7 +258,6 @@ private string nnGenerator (Layers ...) (int inputLen, Layers layers) {
     assert (inputLen > 0);
     static assert (layers.length, `Cannot create empty neural network.`);
     import std.array : Appender;
-    import std.conv  : text;
     import std.meta  : staticMap;
     
     // Last layer doesn't need to store its activations for backpropagation.
@@ -300,22 +306,24 @@ private string nnGenerator (Layers ...) (int inputLen, Layers layers) {
 }
 
 unittest {
-    /+
     import dense;
     import local;
     import gru;
     import activations;
+    import optimizer;
     debug {
         auto a = new NeuralNetwork !
         (
              /* Input length */ 4
              , float
              , 0.2 // Can use both a function or a value as weight initialization.
-             , Layer! (Dense) (8)
+             , Layer! (Dense) (2)
+             /+
              , Layer! (Dense, ReLU!float) (16)
              , Layer! (GRU, TanH!float) (16)
              , Layer! (Local, LeakyReLU!0.2f) (4)
              , Layer! (Dense, Linear!float) (2)
+             +/
         ); 
 
         float [2] output;
@@ -334,15 +342,18 @@ unittest {
             +/
             accumulated [] += output [] - expected [];
         }
-        a.train! (`a/35`, meanSquaredError, false /* No stdout*/)
-        (
-              3 /* Just 3 epochs for testing */
+        
+        a.train! (
+            Optimizer! (Momentum, 0.005)
+            , meanSquaredError
+            , false /* No stdout*/
+        )(
+              1 /* Just 3 epochs for testing */
             , 2 /* Batch size */
             , [[1f,2,3,4],[2f,3,4,5],[3f,4,5,6]]
             , [[4f,3], [5f,4], [6f,5]]
         );
         //a.predict (input).writeln;
     }
-    +/
 }
 pragma (msg, `Might check the CPU type in the dflags section of dub.json -mcpu=skylake was slower than not writing anything`);

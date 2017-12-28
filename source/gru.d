@@ -9,18 +9,20 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
     alias LastWeightVector = DataType [neurons][neurons];
     alias OutVector        = DataType [neurons];
     alias InVector         = DataType [neuronsLayerBefore];
+    import optimizer : trainable;
 
-    WeightVector     weights;
-    WeightVector     resetWeights;
-    WeightVector     updateWeights;
+    @trainable WeightVector     weights;
+    @trainable WeightVector     resetWeights;
+    @trainable WeightVector     updateWeights;
 
-    LastWeightVector lastWeights;
-    LastWeightVector lastResetWeights;
-    LastWeightVector lastUpdateWeights;
+    @trainable LastWeightVector lastWeights;
+    @trainable LastWeightVector lastResetWeights;
+    @trainable LastWeightVector lastUpdateWeights;
 
-    OutVector        weightBiases;
-    OutVector        resetBiases;
-    OutVector        updateBiases;
+    @trainable OutVector        weightBiases;
+    @trainable OutVector        resetBiases;
+    @trainable OutVector        updateBiases;
+    
     OutVector        hiddenState          = 0; // Last output.
 
     // TODO: Make optional.
@@ -49,6 +51,8 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
         resetBiases  [] = weightInitialization;
         updateBiases [] = weightInitialization;
     }
+
+    @disable this ();
 
     void reset () {
         hiddenState [] = 0;
@@ -117,9 +121,10 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
     // TODO: Might be useful to separate the errorVector calculation into
     // another function so that neural.d can omit the calculation for the first layer.
     // Needs batchSize to calculate the means.
-    void backprop (alias updateFunction) (
+    void backprop (Optimizer) (
             in OutVector errorVector,
-            out InVector errorGradientLayerBefore
+            out InVector errorGradientLayerBefore,
+            ref Optimizer optimizer
         ) {
         /+debug {
             import std.stdio;
@@ -140,7 +145,6 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
         preUpdateStateSum     [] /= forwardCalls;
         preCandidateStateSum  [] /= forwardCalls;
 
-        alias changeBasedOn = unaryFun!updateFunction;
         foreach (neuronPos, error; errorVector) {
             // TODO: Check if ignoring the update derivative helps on the long run.
             // Includes the sigmoids derivative for convenience.
@@ -148,17 +152,23 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
                 * (hiddenStateSum [neuronPos] - candidateStateSum [neuronPos])
                 * sigmoids.derivative (preUpdateStateSum [neuronPos]);
 
-            updateBiases [neuronPos] -= changeBasedOn (updateDerivative);
+            //updateBiases [neuronPos] -= changeBasedOn (updateDerivative);
+            optimizer.setWeights!`updateBiases`
+                (updateBiases [neuronPos], updateDerivative, neuronPos);
 
             // Update gate gradients.
             foreach (i, ref weight; updateWeights [neuronPos]) {
                 errorGradientLayerBefore [i] += updateDerivative * weight;
                 auto weightDerivative = updateDerivative * inputSum [i];
-                weight -= changeBasedOn (weightDerivative);
+                //weight -= changeBasedOn (weightDerivative);
+                optimizer.setWeights!`updateWeights`
+                    (weight, weightDerivative, neuronPos, i);
             }
             foreach (i, ref weight; lastUpdateWeights [neuronPos]) {
                 auto weightDerivative = updateDerivative * hiddenStateSum [i];
-                weight -= changeBasedOn (weightDerivative);
+                //weight -= changeBasedOn (weightDerivative);
+                optimizer.setWeights!`lastUpdateWeights`
+                    (weight, weightDerivative, neuronPos, i);
             }
 
             auto candidateDerivative =
@@ -166,17 +176,23 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
                 * (updateStateNegSum [neuronPos] + 1)
                 * activation.derivative (preCandidateStateSum [neuronPos]);
 
-            weightBiases [neuronPos] -= changeBasedOn (candidateDerivative);
+            //weightBiases [neuronPos] -= changeBasedOn (candidateDerivative);
+            optimizer.setWeights!`weightBiases`
+                (weightBiases [neuronPos], candidateDerivative, neuronPos);
 
             foreach (i, ref weight; weights [neuronPos]) {
                 errorGradientLayerBefore [i] += candidateDerivative * weight;
                 auto weightDerivative = candidateDerivative * inputSum [i];
-                weight -= changeBasedOn (weightDerivative);
+                //weight -= changeBasedOn (weightDerivative);
+                optimizer.setWeights!`weights`
+                    (weight, weightDerivative, neuronPos, i);
             }
 
             foreach (i, ref weight; lastWeights [neuronPos]) {
                 auto weightDerivative = candidateDerivative * hiddenStateSum [i];
-                weight -= changeBasedOn (weightDerivative);
+                //weight -= changeBasedOn (weightDerivative);
+                optimizer.setWeights!`lastWeights`
+                    (weight, weightDerivative, neuronPos, i);
             }
 
             auto resetDerivative = 
@@ -184,15 +200,21 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
                 * weightsByHiddenSum [neuronPos]
                 * sigmoids.derivative (preResetStateSum [neuronPos]);
 
-            resetBiases [neuronPos] -= changeBasedOn (resetDerivative);
+            //resetBiases [neuronPos] -= changeBasedOn (resetDerivative);
+            optimizer.setWeights!`resetBiases`
+                (resetBiases [neuronPos], resetDerivative, neuronPos);
             foreach (i, ref weight; resetWeights [neuronPos]) {
                 errorGradientLayerBefore [i] += resetDerivative * weight;
                 auto weightDerivative = resetDerivative * inputSum [i];
-                weight -= changeBasedOn (weightDerivative);
+                //weight -= changeBasedOn (weightDerivative);
+                optimizer.setWeights!`resetWeights`
+                    (weight, weightDerivative, neuronPos, i);
             }
             foreach (i, ref weight; lastResetWeights [neuronPos]) {
                 auto weightDerivative = resetDerivative * hiddenStateSum [i];
-                weight -= changeBasedOn (weightDerivative);
+                //weight -= changeBasedOn (weightDerivative);
+                optimizer.setWeights!`lastResetWeights`
+                    (weight, weightDerivative, neuronPos, i);
             }
         }
 
