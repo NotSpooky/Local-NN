@@ -344,7 +344,7 @@ unittest {
         }
         
         a.train! (
-            Optimizer! (Momentum, 0.005)
+            Optimizer! (Momentum, 0.005, 0.3)
             , meanSquaredError
             , false /* No stdout*/
         )(

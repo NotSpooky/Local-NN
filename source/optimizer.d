@@ -1,10 +1,10 @@
 enum trainable; // Used for UDAs
 
-template Optimizer (alias Type, double learningRate) {
+template Optimizer (alias Type, double learningRate, RestOfParameters ...) {
     // Useful so that Optimizer with the learning rate and type can be specified
     // to the neural network and the neural network uses this to instanciate
     // for each layer.
-    alias optimizer (alias Layer) = Type! (learningRate, Layer);
+    alias optimizer (alias Layer) = Type! (learningRate, Layer, RestOfParameters);
 }
 
 // TODO: Check if it's more useful to use doubles instead of DataType for floats.
