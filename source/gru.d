@@ -54,6 +54,8 @@ struct GRU (int neurons, int neuronsLayerBefore, DataType = float, alias activat
 
     @disable this ();
 
+    // Stateful layers must have this.
+    // "Forgets" the hidden state.
     void reset () {
         hiddenState [] = 0;
     }

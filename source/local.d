@@ -62,9 +62,11 @@ struct Local (int neurons, int neuronsLayerBefore, DataType = float
         foreach (neuronPos, error; errorVector) {
             auto effectInError = error 
                 * activation.derivative (preActivationOutputSum [neuronPos]);
-            optimizer.setWeights!`biases` (biases [neuronPos], effectInError, neuronPos);
+            optimizer.setWeights!`biases` 
+                (biases [neuronPos], effectInError, neuronPos);
             foreach (j, weight; weights [neuronPos]) {
-                errorGradientLayerBefore [neuronPos * stride + j] += effectInError * weight;
+                errorGradientLayerBefore [neuronPos * stride + j] 
+                    += effectInError * weight;
                 auto weightDerivative = effectInError * activationSum [j];
 
                 optimizer.setWeights!`weights` 

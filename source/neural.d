@@ -35,21 +35,30 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
         }
     }
 
+    
+
     // Version that returns the array by the output parameter.
-    auto predict (in DataType [inputLen] input, out DataType [outputLen] output) {
+    // Allows multidimensional outputs.
+    auto predict (R, RO) (in R [inputLen] input, out RO [outputLen] output) {
         forward!false (input, output);
     }
 
     // Version that creates a new array and returns it.
-    auto predict (in DataType [inputLen] input) {
+    // Assumes that the output has one dimension.
+    auto predict (R) (in R [inputLen] input) {
         //auto toReturn = new DataType [outputLen];
         DataType [outputLen] toReturn;
         predict (input, toReturn);
         return toReturn.dup;
     }
 
-    private void forward (bool training = false)
-        (in DataType [inputLen] input, out DataType [outputLen] output) {
+    private void forward 
+        (
+            bool training = false, SingleInputType
+        ) (
+            in SingleInputType [inputLen] input
+            , out SingleInputType [outputLen] output
+        ) {
 
         // Used to allocate an array of the appropiate length for the buffers.
         // Could be optimized to use the second biggest also for the other buffer.
@@ -139,13 +148,33 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
     ) (int epochs, int batchSize, R1 inputs, R2 labels) {
 
         assert (inputs.length == labels.length);
-        assert (inputs.front.length == inputLen
-            , `incorrect input length for training.`);
-        static assert (is (typeof (inputs.front.front) == DataType), 
-            text (`Incorrect data type for input, should be `
-                , DataType.stringof
-            )
-        );
+        static if (hasStatefulLayers) {
+            static assert (
+                is (typeof (inputs.front.front.front) == DataType)
+                , `Network is stateful, must receive sequences`
+            );
+
+            // Technically should test the entire dataset, but that's too
+            // expensive.
+            assert (
+                inputs.front.front.length == inputLen
+                , `incorrect input length for training.`
+            );
+        } else {
+            static assert (is (typeof (inputs.front.front) == DataType), 
+                text (`Incorrect data type for input, should be `
+                    , DataType.stringof
+                )
+            );
+            // Technically should test the entire dataset, but that's too
+            // expensive.
+            assert (
+                inputs.front.length == inputLen
+                , `incorrect input length for training.`
+            );
+        }
+
+        // TODO: Allow multidimensional outputs.
         static assert (is (typeof (labels.front.front) == DataType), 
             text (`Incorrect data type for labels, should be `
                 , DataType.stringof
@@ -184,15 +213,27 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
                 static if (doInParallel) {
                     import std.parallelism;
                     alias fun = (a) => parallel (a);
-                    //static assert (0, `TODO: Fix race conditions`);
+                    static assert (0, `TODO: Fix race conditions`);
                 } else {
                     alias fun = (a) => a;
                 }
                 foreach (exampleLabel; fun (zip (dataChunks, labelChunks))) {
-                    this.forward!true (
-                        exampleLabel [0].to!(DataType [inputLen]),
-                        output,
-                    );
+                    static if (hasStatefulLayers) {
+                        // Each example is divided into steps.
+                        foreach (step; exampleLabel [0]) {
+                            this.forward!true (
+                                step.to!(DataType [inputLen]),
+                                output
+                            );
+                        }
+                        this.reset;
+                    } else {
+                        // Just one pass per example.
+                        this.forward!true (
+                            exampleLabel [0].to!(DataType [inputLen]),
+                            output,
+                        );
+                    }
                     binaryFun!errorFunction (
                         output, exampleLabel [1], averageOutputError
                     );
@@ -214,7 +255,7 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
         }
     } // End of train
 
-    static string mixBackprop () {
+    private static string mixBackprop () {
         import std.array : Appender;
         Appender!string toReturn;
         foreach_reverse (i, layer; layers) {
@@ -244,6 +285,26 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
             );
         }
         return toReturn.data;
+    }
+
+    private enum hasStatefulLayers = () {
+        bool toReturn = false;
+        foreach (i, layer; layers) {
+            if (__traits(compiles, mixin (text (`layer`, i, `.reset`))))
+                // Has reset method.
+                toReturn = true;
+        }
+        return toReturn;
+    } ();
+    
+    static if (hasStatefulLayers) {
+        void reset () {
+            static foreach (i, layer; layers) {
+                // Has reset method.
+                static if (__traits(compiles, mixin (text (`layer`, i, `.reset`))))
+                    mixin (text (`layer`, i, `.reset;`));
+            }
+        }
     }
 }
 
@@ -320,13 +381,11 @@ unittest {
              /* Input length */ 4
              , float
              , 0.2 // Can use both a function or a value as weight initialization.
-             , Layer! (Dense) (2)
-             /+
+             , Layer! (Dense) (8)
              , Layer! (Dense, ReLU!float) (16)
              , Layer! (GRU, TanH!float) (16)
              , Layer! (Local, LeakyReLU!0.2f) (4)
              , Layer! (Dense, Linear!float) (2)
-             +/
         ); 
 
         float [2] output;
@@ -350,10 +409,12 @@ unittest {
             Optimizer! (Momentum, 0.005, 0.3)
             , meanSquaredError
             , false /* No stdout*/
+            , true
+            , false
         )(
               1 /* Just 3 epochs for testing */
             , 2 /* Batch size */
-            , [[1f,2,3,4],[2f,3,4,5],[3f,4,5,6]]
+            , [[[1f,2,3,4]],[[2f,3,4,5]],[[3f,4,5,6]]]
             , [[4f,3], [5f,4], [6f,5]]
         );
         //a.predict (input).writeln;

@@ -7,6 +7,9 @@ template Optimizer (alias Type, double learningRate, RestOfParameters ...) {
     alias optimizer (alias Layer) = Type! (learningRate, Layer, RestOfParameters);
 }
 
+// Optimizers must have a constructor that takes a non-used bool
+// (structs cannot have 0-parameter constructors) :(
+
 // TODO: Check if it's more useful to use doubles instead of DataType for floats.
 struct Momentum (double learningRate, alias Layer, double momentumPercent = 0.1) {
     // Build members of the same type and length of every @trainable attribute 
@@ -30,7 +33,7 @@ struct Momentum (double learningRate, alias Layer, double momentumPercent = 0.1)
         // Eg. weights [4][3] = currentValue;
         auto change = ((1 - momentumPercent) * gradient 
                 + momentumPercent * mixin (varToUse));
-        debug {
+        debug (2) {
             import std.stdio;
             write (memberName, ` `);
             write (`change = `, change, ` `);
