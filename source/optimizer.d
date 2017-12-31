@@ -11,7 +11,7 @@ template Optimizer (alias Type, double learningRate, RestOfParameters ...) {
 // (structs cannot have 0-parameter constructors) :(
 
 // TODO: Check if it's more useful to use doubles instead of DataType for floats.
-struct Momentum (double learningRate, alias Layer, double momentumPercent = 0.1) {
+struct Momentum (double learningRate, alias Layer, double momentumPercent = 0.7) {
     // Build members of the same type and length of every @trainable attribute 
     // of Layer.
     import std.traits;
@@ -29,17 +29,17 @@ struct Momentum (double learningRate, alias Layer, double momentumPercent = 0.1)
     void setWeights (string memberName, D, Indices ...)
         (ref D currentValue, D gradient, Indices indices) {
         static assert (indices.length > 0, `setWeights needs indices.`);
-        enum varToUse = indexedRecursively! (memberName, Indices);
+        enum momentum = indexedRecursively! (memberName, Indices);
         // Eg. weights [4][3] = currentValue;
         auto change = ((1 - momentumPercent) * gradient 
-                + momentumPercent * mixin (varToUse));
+                + momentumPercent * mixin (momentum));
         debug (2) {
             import std.stdio;
             write (memberName, ` `);
-            write (`change = `, change, ` `);
-            writeln (`varToUse = `, mixin (varToUse));
+            write (`momentum = `, mixin (momentum), ` `);
+            writeln (`change = `, change);
         }
-        mixin (varToUse) = change;
+        mixin (momentum) = change;
         currentValue -= learningRate * change;
     }
 }
@@ -73,8 +73,8 @@ struct RMSProp (double learningRate, alias Layer, double geometricRate = 0.9
         static assert (indices.length > 0, `setWeights needs indices.`);
         enum stored = indexedRecursively! (memberName, Indices);
         // Eg. weights [4][3] = currentValue;
-        auto change = (1 - geometricRate) * mixin (stored)
-            + geometricRate * gradient * gradient;
+        auto rms = geometricRate * mixin (stored)
+            + (1 - geometricRate) * gradient * gradient;
 
         debug (2) {
             import std.stdio;
@@ -82,14 +82,14 @@ struct RMSProp (double learningRate, alias Layer, double geometricRate = 0.9
             writeln (`currentValue = `, currentValue);
             writeln (`gradient = `, gradient);
             writeln (`stored = `, mixin (stored));
-            writeln (`change = `, change);
+            writeln (`rms = `, rms);
         }
-        mixin (stored) = change;
+        mixin (stored) = rms;
         import std.math : sqrt;
-        currentValue -= learningRate * gradient / sqrt (change + epsilon);
+        currentValue -= learningRate * gradient / sqrt (rms + epsilon);
         debug (2) {
             writeln (`Setting currentValue to: `, learningRate, ` * `
-                , gradient, `/ sqrt (`, change, ` + `, epsilon, `)`);
+                , gradient, `/ sqrt (`, rms, ` + `, epsilon, `)`);
             writeln;
         }
     }

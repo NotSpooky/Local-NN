@@ -203,6 +203,7 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
             }
             static if (printError) {
                 DataType errorToPrint = 0;
+                DataType [outputLen] outputError = 0;
             }
             foreach (batch; indices.chunks (batchSize)) {
                 auto dataChunks  = inputs.indexed (batch);
@@ -237,19 +238,24 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
                     binaryFun!errorFunction (
                         output, exampleLabel [1], averageOutputError
                     );
+                    static if (printError) {
+                        binaryFun!errorFunction (
+                            output, exampleLabel [1], outputError
+                        );
+                        import std.math  : abs;
+                        errorToPrint += outputError [].map!abs.sum;
+                        outputError [] = 0;
+                    }
                 }
                 averageOutputError [] /= batch.length;
-                static if (printError) {
-                    import std.math  : abs;
-                    errorToPrint += averageOutputError [].map!abs.sum;
-                }
                 // Gradient of layer activations w.r.t. layer output error.
                 DataType [biggestInput] [2] backError; 
                 mixin (mixBackprop ());
             }
             static if (printError) {
                 import std.stdio : writeln;
-                writeln (`Linear error = `, errorToPrint / batchSize);
+                writeln (`Average error = `
+                    , errorToPrint / (outputLen * inputs.length));
                 errorToPrint = 0;
             }
         }
