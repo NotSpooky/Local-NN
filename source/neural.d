@@ -231,6 +231,12 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
             serializeLayer (filename, mixin (text (`layer`, i)));
         }
     }
+    void deserialize (string filename) {
+        auto file = std.file.read (filename);
+        foreach (i, layer; layers) {
+            deserializeLayer (file, mixin (text (`layer`, i)));
+        }
+    }
     private static string mixBackprop () {
         import std.array : Appender;
         Appender!string toReturn;
@@ -393,8 +399,7 @@ private auto serializeLayer (Layer)(string filename, Layer toSerialize) {
             (filename, __traits (getMember, toSerialize, symbol.stringof));
     }
 }
-private auto deserializeLayer (Layer)(string filename, out Layer output) {
-    auto file = std.file.read (filename);
+private auto deserializeLayer (Layer)(ref void [] file, ref Layer output) {
     foreach (symbol; getSymbolsByUDA! (Layer, trainable)) {
         auto member = cast (void []) __traits (getMember, output, symbol.stringof);
         member [0..member.length] = file [0..member.length];
@@ -446,13 +451,14 @@ unittest {
             , true
             , false
         )(
-              1 /* Just 3 epochs for testing */
+              3 /* Just 3 epochs for testing */
             , 2 /* Batch size */
             , [[[1f,2,3,4]],[[2f,3,4,5]],[[3f,4,5,6]]]
             , [[4f,3], [5f,4], [6f,5]]
         );
-        a.serialize (`test.weights`);
+        //a.deserialize (`test.weights`);
         //a.predict (input).writeln;
+        //a.serialize (`test.weights`);
     }
 }
 pragma (msg, `Might check the CPU type in the dflags section of dub.json -mcpu=skylake was slower than not writing anything`);
