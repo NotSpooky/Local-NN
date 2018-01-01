@@ -1,11 +1,6 @@
 module activations;
 
 @safe @nogc pure nothrow {
-    // Initializations
-    auto ones () { return 1;}
-    auto zeros () {return 0;} 
-
-
     // Activations.
     struct Linear (T = float) {
         static T opCall (T input) {return input;}

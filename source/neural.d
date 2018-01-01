@@ -3,6 +3,7 @@ module neural;
 import std.functional : unaryFun, binaryFun;
 import std.algorithm;
 import std.conv  : text, to;
+static import std.file;
 
 // TODO: Allow arrays of layers or similar.
 // TODO: Error function gradient.
@@ -81,47 +82,6 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
         //pragma (msg, generateForward (training));
         mixin (generateForward (training));
     }
-
-    // TODO: Reset the internal state of the resetteable layers.
-    private static string generateForward (bool training) {
-        Appender!string toReturn;
-
-        // Each layer outputs to alternating buffers.
-        foreach (i, layer; layers) {
-            static if (i == 0) {
-                // First layer receives from input.
-                string layerInput = `input`; 
-            } else {
-                // Other layers receive from the output of the last layer.
-                string layerInput = text (
-                    `buffers [`, (i + 1) % 2, `][0..`,layers [i-1].neurons,`]`
-                );
-            }
-            static if (i == layers.length - 1) {
-                // Last layer outputs to output.
-                string layerOutput = `output`;
-            } else {
-                string layerOutput = text (
-                    `buffers [`,i % 2, `][0..`, layer.neurons ,`]`
-                );
-            }
-
-            // Eg. layer0.forward (input, cast (float [8]) buffers [0][0..8]);
-            //  layer1.forward (
-            //     buffers [0][0..8], cast (float [16]) buffers [1][0..16]
-            //  );
-            //  return buffers [1][0..16].dup;
-            toReturn ~= text (
-                `layer`, i, `.forward (`
-                    , layerInput 
-                    , `, cast (DataType [`, layer.neurons , `])`
-                    , layerOutput
-                , ");\n"
-            );
-        }
-        return toReturn.data;
-    }
-
 
     // Used to allocate an array for backpropagation gradients.
     // TODO: If the backprop algorithm stops writing the last
@@ -261,6 +221,16 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
         }
     } // End of train
 
+    // Note: this writes the file in several steps. Make sure there's not
+    // another process/thread writing to it.
+    void serialize (string filename) {
+        // Clear the file.
+        std.file.write (filename, []); 
+        // Append to it.
+        foreach (i, layer; layers) {
+            serializeLayer (filename, mixin (text (`layer`, i)));
+        }
+    }
     private static string mixBackprop () {
         import std.array : Appender;
         Appender!string toReturn;
@@ -293,6 +263,46 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
         return toReturn.data;
     }
 
+    // TODO: Reset the internal state of the resetteable layers.
+    private static string generateForward (bool training) {
+    Appender!string toReturn;
+
+    // Each layer outputs to alternating buffers.
+    foreach (i, layer; layers) {
+    static if (i == 0) {
+    // First layer receives from input.
+    string layerInput = `input`; 
+    } else {
+    // Other layers receive from the output of the last layer.
+    string layerInput = text (
+            `buffers [`, (i + 1) % 2, `][0..`,layers [i-1].neurons,`]`
+            );
+    }
+    static if (i == layers.length - 1) {
+        // Last layer outputs to output.
+        string layerOutput = `output`;
+    } else {
+        string layerOutput = text (
+                `buffers [`,i % 2, `][0..`, layer.neurons ,`]`
+                );
+    }
+
+    // Eg. layer0.forward (input, cast (float [8]) buffers [0][0..8]);
+    //  layer1.forward (
+    //     buffers [0][0..8], cast (float [16]) buffers [1][0..16]
+    //  );
+    //  return buffers [1][0..16].dup;
+    toReturn ~= text (
+            `layer`, i, `.forward (`
+                , layerInput 
+                , `, cast (DataType [`, layer.neurons , `])`
+                , layerOutput
+                , ");\n"
+                );
+            }
+            return toReturn.data;
+            }
+
     private enum hasStatefulLayers = () {
         bool toReturn = false;
         foreach (i, layer; layers) {
@@ -304,7 +314,7 @@ final class NeuralNetwork (int inputLen, DataType, alias weightInitialization, l
     } ();
     
     static if (hasStatefulLayers) {
-        void reset () {
+        private void reset () {
             static foreach (i, layer; layers) {
                 // Has reset method.
                 static if (__traits(compiles, mixin (text (`layer`, i, `.reset`))))
@@ -375,6 +385,24 @@ private string nnGenerator (Layers ...) (int inputLen, Layers layers) {
     return toReturn.data;
 }
 
+import std.traits : getSymbolsByUDA;
+import optimizer  : trainable;
+private auto serializeLayer (Layer)(string filename, Layer toSerialize) {
+    foreach (symbol; getSymbolsByUDA! (Layer, trainable)) {
+        std.file.append
+            (filename, __traits (getMember, toSerialize, symbol.stringof));
+    }
+}
+private auto deserializeLayer (Layer)(string filename, out Layer output) {
+    auto file = std.file.read (filename);
+    foreach (symbol; getSymbolsByUDA! (Layer, trainable)) {
+        auto member = cast (void []) __traits (getMember, output, symbol.stringof);
+        member [0..member.length] = file [0..member.length];
+        file = file [member.length .. $];
+
+    }
+}
+
 unittest {
     import dense;
     import local;
@@ -423,6 +451,7 @@ unittest {
             , [[[1f,2,3,4]],[[2f,3,4,5]],[[3f,4,5,6]]]
             , [[4f,3], [5f,4], [6f,5]]
         );
+        a.serialize (`test.weights`);
         //a.predict (input).writeln;
     }
 }
